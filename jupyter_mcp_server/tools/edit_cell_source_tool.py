@@ -127,7 +127,8 @@ class EditCellSourceTool(BaseTool):
         self, notebook_manager: NotebookManager, cell_index: int,
         old_string: str, new_string: str, replace_all: bool,
     ) -> str:
-        async with notebook_manager.get_current_connection() as notebook:
+        _nb = notebook_name or notebook_manager.get_current_notebook() or "default"
+        async with notebook_manager.get_notebook_connection(_nb) as notebook:
             if cell_index >= len(notebook):
                 raise ValueError(f"Cell index {cell_index} out of range")
 
@@ -157,6 +158,7 @@ class EditCellSourceTool(BaseTool):
         old_string: str = None,
         new_string: str = None,
         replace_all: bool = False,
+        notebook_name: str = "",
         **kwargs,
     ) -> str:
         """Execute the edit_cell_source tool.
@@ -170,7 +172,7 @@ class EditCellSourceTool(BaseTool):
 
             context = get_server_context()
             serverapp = context.serverapp
-            notebook_path, _ = get_current_notebook_context(notebook_manager)
+            notebook_path, _ = get_current_notebook_context(notebook_manager, notebook_name=notebook_name)
 
             if serverapp and not Path(notebook_path).is_absolute():
                 root_dir = serverapp.root_dir

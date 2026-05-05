@@ -135,7 +135,8 @@ class MoveCellTool(BaseTool):
         Returns:
             Tuple of (notebook, moved_cell_info)
         """
-        async with notebook_manager.get_current_connection() as notebook:
+        _nb = notebook_name or notebook_manager.get_current_notebook() or "default"
+        async with notebook_manager.get_notebook_connection(_nb) as notebook:
             self._validate_move(source_index, target_index, len(notebook))
 
             if source_index == target_index:
@@ -164,6 +165,7 @@ class MoveCellTool(BaseTool):
         # Tool-specific parameters
         source_index: int = None,
         target_index: int = None,
+        notebook_name: str = "",
         **kwargs,
     ) -> str:
         """Execute the move_cell tool.
@@ -181,7 +183,7 @@ class MoveCellTool(BaseTool):
 
             context = get_server_context()
             serverapp = context.serverapp
-            notebook_path, _ = get_current_notebook_context(notebook_manager)
+            notebook_path, _ = get_current_notebook_context(notebook_manager, notebook_name=notebook_name)
 
             if serverapp and not Path(notebook_path).is_absolute():
                 root_dir = serverapp.root_dir

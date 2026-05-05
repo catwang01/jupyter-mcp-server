@@ -110,6 +110,7 @@ class ExecuteCellTool(BaseTool):
         stream: bool = False,
         progress_interval: int = 5,
         ensure_kernel_alive_fn=None,
+        notebook_name: str = "",
         **kwargs
     ) -> List[Union[str, ImageContent]]:
         """Execute a cell with configurable timeout and optional streaming progress updates.
@@ -141,7 +142,7 @@ class ExecuteCellTool(BaseTool):
                 raise ValueError("kernel_manager is required for JUPYTER_SERVER mode")
 
             # Get notebook_path and kernel_id first
-            notebook_path, kernel_id = get_current_notebook_context(notebook_manager)
+            notebook_path, kernel_id = get_current_notebook_context(notebook_manager, notebook_name=notebook_name)
 
             # Resolve to absolute path
             if notebook_path and serverapp and not Path(notebook_path).is_absolute():
@@ -249,10 +250,10 @@ class ExecuteCellTool(BaseTool):
         elif mode == ServerMode.MCP_SERVER:
             kernel = ensure_kernel_alive_fn()
             await wait_for_kernel_idle(kernel, max_wait_seconds=30)
-            current_nb = notebook_manager.get_current_notebook() or "default"
+            current_nb = notebook_name or notebook_manager.get_current_notebook() or "default"
             kid = notebook_manager.get_kernel_id(current_nb) or ""
 
-            async with notebook_manager.get_current_connection() as notebook:
+            async with notebook_manager.get_notebook_connection(current_nb) as notebook:
                 num_cells = len(notebook)
                 if cell_index >= num_cells:
                     raise ValueError(f"Cell index {cell_index} out of range (notebook has {num_cells} cells)")

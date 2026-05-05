@@ -112,7 +112,8 @@ class DeleteCellTool(BaseTool):
         Returns:
             List of deleted cell information
         """
-        async with notebook_manager.get_current_connection() as notebook:
+        _nb = notebook_name or notebook_manager.get_current_notebook() or "default"
+        async with notebook_manager.get_notebook_connection(_nb) as notebook:
             if max(cell_indices) >= len(notebook):
                 raise ValueError(
                     f"Cell index {max(cell_indices)} is out of range. Notebook has {len(notebook)} cells."
@@ -133,6 +134,7 @@ class DeleteCellTool(BaseTool):
         # Tool-specific parameters
         cell_indices: list[int] = None,
         include_source: bool = True,
+        notebook_name: str = "",
         **kwargs
     ) -> str:
         """Execute the delete_cell tool.
@@ -169,7 +171,7 @@ class DeleteCellTool(BaseTool):
             
             context = get_server_context()
             serverapp = context.serverapp
-            notebook_path, _ = get_current_notebook_context(notebook_manager)
+            notebook_path, _ = get_current_notebook_context(notebook_manager, notebook_name=notebook_name)
 
             # Resolve to absolute path
             if serverapp and not Path(notebook_path).is_absolute():

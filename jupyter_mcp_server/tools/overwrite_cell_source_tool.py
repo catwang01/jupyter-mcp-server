@@ -137,7 +137,8 @@ class OverwriteCellSourceTool(BaseTool):
         Raises:
             ValueError: When cell_index is out of range
         """
-        async with notebook_manager.get_current_connection() as notebook:
+        _nb = notebook_name or notebook_manager.get_current_notebook() or "default"
+        async with notebook_manager.get_notebook_connection(_nb) as notebook:
             if cell_index >= len(notebook):
                 raise ValueError(f"Cell index {cell_index} out of range")
             
@@ -162,6 +163,7 @@ class OverwriteCellSourceTool(BaseTool):
         # Tool-specific parameters
         cell_index: int = None,
         cell_source: str = None,
+        notebook_name: str = "",
         **kwargs
     ) -> str:
         """Execute the overwrite_cell_source tool.
@@ -209,7 +211,7 @@ class OverwriteCellSourceTool(BaseTool):
             
             context = get_server_context()
             serverapp = context.serverapp
-            notebook_path, _ = get_current_notebook_context(notebook_manager)
+            notebook_path, _ = get_current_notebook_context(notebook_manager, notebook_name=notebook_name)
             
             # Resolve to absolute path
             if serverapp and not Path(notebook_path).is_absolute():

@@ -58,7 +58,7 @@ class ExecuteCodeTool(BaseTool):
     ) -> list[Union[str, ImageContent]]:
         """Execute code using notebook_manager (MCP_SERVER mode - original logic)."""
         # Get current notebook name and kernel
-        current_notebook = notebook_manager.get_current_notebook() or "default"
+        current_notebook = notebook_name or notebook_manager.get_current_notebook() or "default"
         kernel = notebook_manager.get_kernel(current_notebook)
 
         if not kernel:
@@ -141,6 +141,7 @@ class ExecuteCodeTool(BaseTool):
         ensure_kernel_alive_fn=None,
         wait_for_kernel_idle_fn=None,
         safe_extract_outputs_fn=None,
+        notebook_name: str = "",
         **kwargs
     ) -> list[Union[str, ImageContent]]:
         """Execute IPython code directly in the kernel.
@@ -170,7 +171,7 @@ class ExecuteCodeTool(BaseTool):
             if kernel_id is None:
                 # Try to get kernel_id from context
                 from jupyter_mcp_server.utils import get_current_notebook_context
-                _, kernel_id = get_current_notebook_context(notebook_manager)
+                _, kernel_id = get_current_notebook_context(notebook_manager, notebook_name=notebook_name)
             
             if kernel_id is None:
                 # No kernel available - start a new one on demand

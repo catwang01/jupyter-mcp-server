@@ -164,7 +164,8 @@ class InsertCellTool(BaseTool):
             IndexError: When cell_index is out of range
             ValueError: When cell_type is invalid
         """
-        async with notebook_manager.get_current_connection() as notebook:
+        _nb = notebook_name or notebook_manager.get_current_notebook() or "default"
+        async with notebook_manager.get_notebook_connection(_nb) as notebook:
             total_cells = len(notebook)
             
             # Validate insertion parameters
@@ -191,6 +192,7 @@ class InsertCellTool(BaseTool):
         cell_index: int = None,
         cell_type: Literal["code", "markdown"] = None,
         cell_source: str = None,
+        notebook_name: str = "",
         **kwargs
     ) -> str:
         """Execute the insert_cell tool.
@@ -240,7 +242,7 @@ class InsertCellTool(BaseTool):
             
             context = get_server_context()
             serverapp = context.serverapp
-            notebook_path, _ = get_current_notebook_context(notebook_manager)
+            notebook_path, _ = get_current_notebook_context(notebook_manager, notebook_name=notebook_name)
             
             # Resolve to absolute path
             if serverapp and not Path(notebook_path).is_absolute():
