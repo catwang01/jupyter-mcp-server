@@ -585,3 +585,73 @@ def test_server_tool_registration():
     
     finally:
         reset_config()
+
+
+def test_notebook_name_param_in_tool_signatures():
+    """Verify all cell operation tools expose notebook_name as an optional parameter.
+
+    This is a unit test — no running Jupyter server required.
+    It guards against regressions where notebook_name is accidentally removed.
+    """
+    import inspect
+    from jupyter_mcp_server.tools.execute_cell_tool import ExecuteCellTool
+    from jupyter_mcp_server.tools.insert_cell_tool import InsertCellTool
+    from jupyter_mcp_server.tools.edit_cell_source_tool import EditCellSourceTool
+    from jupyter_mcp_server.tools.overwrite_cell_source_tool import OverwriteCellSourceTool
+    from jupyter_mcp_server.tools.delete_cell_tool import DeleteCellTool
+    from jupyter_mcp_server.tools.move_cell_tool import MoveCellTool
+    from jupyter_mcp_server.tools.read_cell_tool import ReadCellTool
+    from jupyter_mcp_server.tools.execute_code_tool import ExecuteCodeTool
+
+    tools = [
+        ExecuteCellTool,
+        InsertCellTool,
+        EditCellSourceTool,
+        OverwriteCellSourceTool,
+        DeleteCellTool,
+        MoveCellTool,
+        ReadCellTool,
+        ExecuteCodeTool,
+    ]
+    for tool_cls in tools:
+        sig = inspect.signature(tool_cls().execute)
+        assert "notebook_name" in sig.parameters, (
+            f"{tool_cls.__name__}.execute() is missing notebook_name parameter"
+        )
+        param = sig.parameters["notebook_name"]
+        assert param.default == "", (
+            f"{tool_cls.__name__}.execute() notebook_name default should be '' not {param.default!r}"
+        )
+    logging.info("✅ All cell tools expose notebook_name with default=''")
+
+
+def test_get_current_notebook_context_explicit_name():
+    """get_current_notebook_context resolves explicit notebook_name over current active notebook."""
+    from jupyter_mcp_server.utils import get_current_notebook_context
+    from jupyter_mcp_server.notebook_manager import NotebookManager
+
+    mgr = NotebookManager()
+    # Register two fake notebooks
+    mgr._notebooks["nb_a"] = {
+        "kernel": {"id": "kernel-a"},
+        "is_local": True,
+        "notebook_info": {"path": "path/to/nb_a.ipynb", "server_url": "local", "token": None},
+    }
+    mgr._notebooks["nb_b"] = {
+        "kernel": {"id": "kernel-b"},
+        "is_local": True,
+        "notebook_info": {"path": "path/to/nb_b.ipynb", "server_url": "local", "token": None},
+    }
+    mgr._current_notebook = "nb_a"
+
+    # Without explicit name → resolves to current (nb_a)
+    path, kid = get_current_notebook_context(mgr, notebook_name="")
+    assert path == "path/to/nb_a.ipynb"
+    assert kid == "kernel-a"
+
+    # With explicit name → resolves to nb_b regardless of current
+    path, kid = get_current_notebook_context(mgr, notebook_name="nb_b")
+    assert path == "path/to/nb_b.ipynb"
+    assert kid == "kernel-b"
+
+    logging.info("✅ get_current_notebook_context explicit name test passed")
