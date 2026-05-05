@@ -13,36 +13,38 @@ from jupyter_mcp_server.hooks import HookEvent, HookRegistry
 from jupyter_nbmodel_client import NotebookModel
 
 
-def get_current_notebook_context(notebook_manager=None):
+def get_current_notebook_context(notebook_manager=None, notebook_name: str = ""):
     """
-    Get the current notebook path and kernel ID for JUPYTER_SERVER mode.
-    
+    Get the notebook path and kernel ID.
+
     Args:
         notebook_manager: NotebookManager instance (optional)
-        
+        notebook_name: Explicit notebook name to use; falls back to the currently
+                       active notebook when empty.
+
     Returns:
         Tuple of (notebook_path, kernel_id)
-        Falls back to config values if notebook_manager not provided
+        Falls back to config values if not found in manager.
     """
     from .config import get_config
-    
+
     notebook_path = None
     kernel_id = None
-    
+
     if notebook_manager:
-        # Try to get current notebook info from manager
-        notebook_path = notebook_manager.get_current_notebook_path()
-        current_notebook = notebook_manager.get_current_notebook() or "default"
-        kernel_id = notebook_manager.get_kernel_id(current_notebook)
-    
-    # Fallback to config if not found in manager
+        # Prefer explicit notebook_name; fall back to currently-active notebook
+        resolved = notebook_name or notebook_manager.get_current_notebook() or "default"
+        notebook_path = notebook_manager.get_notebook_path(resolved)
+        kernel_id = notebook_manager.get_kernel_id(resolved)
+
+    # Fallback to config if still not found
     if not notebook_path or not kernel_id:
         config = get_config()
         if not notebook_path:
             notebook_path = config.document_id
         if not kernel_id:
             kernel_id = config.runtime_id
-    
+
     return notebook_path, kernel_id
 
 
