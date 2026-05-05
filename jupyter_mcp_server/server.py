@@ -452,6 +452,7 @@ async def insert_cell(
     cell_index: Annotated[int, Field(description="Target index for insertion (0-based), use -1 to append at end", ge=-1)],
     cell_type: Annotated[Literal["code", "markdown"], Field(description="Type of cell to insert")],
     cell_source: Annotated[str, Field(description="Source content for the cell")],
+    notebook_name: Annotated[str, Field(description="Name of the notebook to operate on (from use_notebook). Leave empty to use the currently activated notebook.")] = "",
 ) -> Annotated[str, Field(description="Success message and the structure of its surrounding cells")]:
     """Insert a cell to specified position from the currently activated notebook."""
     return await safe_notebook_operation(
@@ -464,6 +465,7 @@ async def insert_cell(
             cell_index=cell_index,
             cell_source=cell_source,
             cell_type=cell_type,
+            notebook_name=notebook_name,
         )
     )
 
@@ -477,6 +479,7 @@ async def insert_cell(
 async def overwrite_cell_source(
     cell_index: Annotated[int, Field(description="Index of the cell to overwrite (0-based)", ge=0)],
     cell_source: Annotated[str, Field(description="New complete cell source")],
+    notebook_name: Annotated[str, Field(description="Name of the notebook to operate on (from use_notebook). Leave empty to use the currently activated notebook.")] = "",
 ) -> Annotated[str, Field(description="Success message with diff showing changes made")]:
     """Replace the entire source of a cell in the currently activated notebook.
     Returns a diff showing the changes made.
@@ -492,6 +495,7 @@ async def overwrite_cell_source(
             notebook_manager=notebook_manager,
             cell_index=cell_index,
             cell_source=cell_source,
+            notebook_name=notebook_name,
         )
     )
 
@@ -506,6 +510,7 @@ async def edit_cell_source(
     old_string: Annotated[str, Field(description="Exact string to find in cell source")],
     new_string: Annotated[str, Field(description="Replacement string")],
     replace_all: Annotated[bool, Field(description="Replace all occurrences (default: first only)")] = False,
+    notebook_name: Annotated[str, Field(description="Name of the notebook to operate on (from use_notebook). Leave empty to use the currently activated notebook.")] = "",
 ) -> Annotated[str, Field(description="Success message with diff showing changes made")]:
     """Perform a surgical find-and-replace within a cell's source (like an editor's Edit tool).
     Finds `old_string` in the cell and replaces it with `new_string`. Matching is literal
@@ -526,6 +531,7 @@ async def edit_cell_source(
             old_string=old_string,
             new_string=new_string,
             replace_all=replace_all,
+            notebook_name=notebook_name,
         )
     )
 
@@ -542,6 +548,7 @@ async def execute_cell(
     timeout: Annotated[int, Field(description="Maximum seconds to wait for execution")] = 90,
     stream: Annotated[bool, Field(description="Enable streaming progress (including time indicator) updates for long-running cells")] = False,
     progress_interval: Annotated[int, Field(description="Seconds between progress updates when stream=True")] = 5,
+    notebook_name: Annotated[str, Field(description="Name of the notebook to operate on (from use_notebook). Leave empty to use the currently activated notebook.")] = "",
 ) -> Annotated[list[str | ImageContent], Field(description="List of outputs from the executed cell")]:
     """Execute a cell from the currently activated notebook with timeout and return it's outputs"""
     return await safe_notebook_operation(
@@ -555,7 +562,8 @@ async def execute_cell(
             timeout_seconds=timeout,
             stream=stream,
             progress_interval=progress_interval,
-            ensure_kernel_alive_fn=__ensure_kernel_alive
+            ensure_kernel_alive_fn=__ensure_kernel_alive,
+            notebook_name=notebook_name,
         ),
         max_retries=1
     )
@@ -572,6 +580,7 @@ async def insert_execute_code_cell(
     cell_index: Annotated[int, Field(description="Index of the cell to insert and execute (0-based)", ge=-1)],
     cell_source: Annotated[str, Field(description="Code source for the cell")],
     timeout: Annotated[int, Field(description="Maximum seconds to wait for execution")] = 90,
+    notebook_name: Annotated[str, Field(description="Name of the notebook to operate on (from use_notebook). Leave empty to use the currently activated notebook.")] = "",
 ) -> Annotated[list[str | ImageContent], Field(description="List of outputs from the executed cell")]:
     """Insert a cell at specified index from the currently activated notebook and then execute it with timeout and return it's outputs
     It is a shortcut tool for insert_cell and execute_cell tools, recommended to use if you want to insert a cell and execute it at the same time"""
@@ -585,6 +594,7 @@ async def insert_execute_code_cell(
             cell_index=cell_index,
             cell_source=cell_source,
             cell_type="code",
+            notebook_name=notebook_name,
         )
     )
 
@@ -599,7 +609,8 @@ async def insert_execute_code_cell(
             timeout_seconds=timeout,
             stream=False,
             progress_interval=0,
-            ensure_kernel_alive_fn=__ensure_kernel_alive
+            ensure_kernel_alive_fn=__ensure_kernel_alive,
+            notebook_name=notebook_name,
         ),
         max_retries=1
     )
@@ -615,6 +626,7 @@ async def insert_execute_code_cell(
 async def read_cell(
     cell_index: Annotated[int, Field(description="Index of the cell to read (0-based)", ge=0)],
     include_outputs: Annotated[bool, Field(description="Include outputs in the response (only for code cells)")] = True,
+    notebook_name: Annotated[str, Field(description="Name of the notebook to operate on (from use_notebook). Leave empty to use the currently activated notebook.")] = "",
 ) -> Annotated[list[str | ImageContent], Field(description="Cell information including index, type, source, and outputs (for code cells)")]:
     """Read a specific cell from the currently activated notebook and return it's metadata (index, type, execution count), source and outputs (for code cells)"""
     return await safe_notebook_operation(
@@ -625,6 +637,7 @@ async def read_cell(
             notebook_manager=notebook_manager,
             cell_index=cell_index,
             include_outputs=include_outputs,
+            notebook_name=notebook_name,
         )
     )
 
@@ -638,6 +651,7 @@ async def read_cell(
 async def delete_cell(
     cell_indices: Annotated[list[int], Field(description="List of cell indices to delete (0-based)",min_items=1)],
     include_source: Annotated[bool, Field(description="Whether to include the source of deleted cells")] = True,
+    notebook_name: Annotated[str, Field(description="Name of the notebook to operate on (from use_notebook). Leave empty to use the currently activated notebook.")] = "",
 ) -> Annotated[str, Field(description="Success message with list of deleted cells and their source (if include_source=True)")]:
     """Delete specific cells from the currently activated notebook and return the cell source of deleted cells (if include_source=True)."""
     return await safe_notebook_operation(
@@ -649,6 +663,7 @@ async def delete_cell(
             notebook_manager=notebook_manager,
             cell_indices=cell_indices,
             include_source=include_source,
+            notebook_name=notebook_name,
         )
     )
 
@@ -662,6 +677,7 @@ async def delete_cell(
 async def move_cell(
     source_index: Annotated[int, Field(description="Index of the cell to move (0-based)", ge=0)],
     target_index: Annotated[int, Field(description="Destination index where the cell will end up (0-based)", ge=0)],
+    notebook_name: Annotated[str, Field(description="Name of the notebook to operate on (from use_notebook). Leave empty to use the currently activated notebook.")] = "",
 ) -> Annotated[str, Field(description="Success message with moved cell info and surrounding context")]:
     """Move a cell from source_index to target_index within the currently activated notebook.
 
@@ -680,6 +696,7 @@ async def move_cell(
             notebook_manager=notebook_manager,
             source_index=source_index,
             target_index=target_index,
+            notebook_name=notebook_name,
         )
     )
 
@@ -695,6 +712,7 @@ async def move_cell(
 async def execute_code(
     code: Annotated[str, Field(description="Code to execute (supports magic commands with %, shell commands with !)")],
     timeout: Annotated[int, Field(description="Execution timeout in seconds",le=60)] = 30,
+    notebook_name: Annotated[str, Field(description="Name of the notebook to operate on (from use_notebook). Leave empty to use the currently activated notebook.")] = "",
 ) -> Annotated[list[str | ImageContent], Field(description="List of outputs from the executed code")]:
     """Execute code directly in the kernel (not saved to notebook) on the current activated notebook.
 
@@ -713,7 +731,7 @@ async def execute_code(
     # Let the tool handle getting kernel_id via get_current_notebook_context()
     kernel_id = None
     if server_context.mode == ServerMode.JUPYTER_SERVER:
-        current_notebook = notebook_manager.get_current_notebook() or "default"
+        current_notebook = notebook_name or notebook_manager.get_current_notebook() or "default"
         kernel_id = notebook_manager.get_kernel_id(current_notebook)
         # Note: kernel_id might be None here if notebook not in manager,
         # but the tool will fall back to config values via get_current_notebook_context()
@@ -730,6 +748,7 @@ async def execute_code(
             ensure_kernel_alive_fn=__ensure_kernel_alive,
             wait_for_kernel_idle_fn=wait_for_kernel_idle,
             safe_extract_outputs_fn=safe_extract_outputs,
+            notebook_name=notebook_name,
         ),
         max_retries=1
     )
