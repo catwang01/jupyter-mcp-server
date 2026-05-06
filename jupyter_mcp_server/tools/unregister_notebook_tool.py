@@ -13,7 +13,7 @@ from jupyter_mcp_server.notebook_manager import NotebookManager
 logger = logging.getLogger(__name__)
 
 
-class UnuseNotebookTool(BaseTool):
+class UnregisterNotebookTool(BaseTool):
     """Tool to unuse from a notebook and release its resources"""
     
     async def execute(
@@ -29,7 +29,7 @@ class UnuseNotebookTool(BaseTool):
         notebook_name: str = None,
         **kwargs
     ) -> str:
-        """Execute the unuse_notebook tool.
+        """Execute the unregister_notebook tool.
         
         Args:
             mode: Server mode (MCP_SERVER or JUPYTER_SERVER)

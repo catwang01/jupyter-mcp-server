@@ -90,13 +90,13 @@ async def test_execution_spans_emitted(mcp_client_otel: MCPClient, otel_spans_fi
 @pytest.mark.asyncio
 @timeout_wrapper(90)
 async def test_lifecycle_spans_emitted(mcp_client_otel: MCPClient, otel_spans_file: str):
-    """use_notebook triggers a KERNEL_LIFECYCLE span."""
+    """register_notebook triggers a KERNEL_LIFECYCLE span."""
     async with mcp_client_otel:
-        result = await mcp_client_otel.use_notebook("otel_test_nb", "notebook.ipynb")
-        logging.info(f"use_notebook result: {result}")
+        result = await mcp_client_otel.register_notebook("otel_test_nb", "notebook.ipynb")
+        logging.info(f"register_notebook result: {result}")
 
         # Clean up
-        await mcp_client_otel.unuse_notebook("otel_test_nb")
+        await mcp_client_otel.unregister_notebook("otel_test_nb")
 
     spans = _read_spans(otel_spans_file)
     lifecycle_spans = [s for s in spans if s["name"] == "kernel_lifecycle"]

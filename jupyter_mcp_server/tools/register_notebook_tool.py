@@ -16,7 +16,7 @@ from jupyter_mcp_server.models import Notebook
 logger = logging.getLogger(__name__)
 
 
-class UseNotebookTool(BaseTool):
+class RegisterNotebookTool(BaseTool):
     """Tool to use (connect to or create) a notebook file."""
     
     async def _start_kernel_local(self, kernel_manager: Any):
@@ -129,7 +129,7 @@ class UseNotebookTool(BaseTool):
         runtime_token: Optional[str] = None,
         **kwargs
     ) -> str:
-        """Execute the use_notebook tool.
+        """Execute the register_notebook tool.
         
         Args:
             mode: Server mode (MCP_SERVER or JUPYTER_SERVER)

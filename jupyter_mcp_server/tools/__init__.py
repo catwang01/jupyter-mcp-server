@@ -13,8 +13,8 @@ from jupyter_mcp_server.tools._base import BaseTool, ServerMode
 # Import tool implementations - Notebook Management
 from jupyter_mcp_server.tools.list_notebooks_tool import ListNotebooksTool
 from jupyter_mcp_server.tools.restart_notebook_tool import RestartNotebookTool
-from jupyter_mcp_server.tools.unuse_notebook_tool import UnuseNotebookTool
-from jupyter_mcp_server.tools.use_notebook_tool import UseNotebookTool
+from jupyter_mcp_server.tools.unregister_notebook_tool import UnregisterNotebookTool
+from jupyter_mcp_server.tools.register_notebook_tool import RegisterNotebookTool
 
 # Import tool implementations - Cell Reading
 from jupyter_mcp_server.tools.read_notebook_tool import ReadNotebookTool

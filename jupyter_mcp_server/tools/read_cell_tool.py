@@ -51,7 +51,7 @@ class ReadCellTool(BaseTool):
             notebook_path, _ = get_current_notebook_context(notebook_manager, notebook_name=notebook_name)
 
             if not notebook_path:
-                return ["No active notebook. Use the use_notebook tool to activate a notebook first."]
+                return ["No active notebook. Use the register_notebook tool to activate a notebook first."]
 
             model = await contents_manager.get(notebook_path, content=True, type='notebook')
             if 'content' not in model:

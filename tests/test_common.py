@@ -28,10 +28,10 @@ from mcp.client.streamable_http import streamable_http_client
 # TODO: could be retrieved from code (inspect)
 JUPYTER_TOOLS = [
     # Multi-Notebook Management Tools
-    "use_notebook",
+    "register_notebook",
     "list_notebooks", 
     "restart_notebook",
-    "unuse_notebook",
+    "unregister_notebook",
     "read_notebook",
     # Cell Tools
     "insert_cell",
@@ -283,7 +283,7 @@ class MCPClient:
 
     # Multi-Notebook Management Methods
     @requires_session
-    async def use_notebook(self, notebook_name, notebook_path=None, mode="connect", kernel_id=None):
+    async def register_notebook(self, notebook_name, notebook_path=None, mode="connect", kernel_id=None):
         arguments = {
             "notebook_name": notebook_name, 
             "mode": mode,
@@ -296,7 +296,7 @@ class MCPClient:
         if kernel_id is not None:
             arguments["kernel_id"] = kernel_id
         
-        result = await self._session.call_tool("use_notebook", arguments=arguments)  # type: ignore
+        result = await self._session.call_tool("register_notebook", arguments=arguments)  # type: ignore
         return self._extract_text_content(result)
     
     @requires_session
@@ -310,8 +310,8 @@ class MCPClient:
         return self._extract_text_content(result)
     
     @requires_session
-    async def unuse_notebook(self, notebook_name):
-        result = await self._session.call_tool("unuse_notebook", arguments={"notebook_name": notebook_name})  # type: ignore
+    async def unregister_notebook(self, notebook_name):
+        result = await self._session.call_tool("unregister_notebook", arguments={"notebook_name": notebook_name})  # type: ignore
         return self._extract_text_content(result)
     
     @requires_session

@@ -8,7 +8,7 @@ import logging
 from typing import Any
 
 from jupyter_mcp_server.notebook_manager import NotebookManager
-from jupyter_mcp_server.tools.use_notebook_tool import UseNotebookTool
+from jupyter_mcp_server.tools.register_notebook_tool import RegisterNotebookTool
 
 logger = logging.getLogger(__name__)
 
@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 async def auto_enroll_document(
     config: Any,
     notebook_manager: NotebookManager,
-    use_notebook_tool: UseNotebookTool,
+    use_notebook_tool: RegisterNotebookTool,
     server_context: Any,
 ) -> None:
     """Automatically enroll the configured document_id as a managed notebook.
@@ -29,7 +29,7 @@ async def auto_enroll_document(
     Args:
         config: JupyterMCPConfig instance with configuration parameters
         notebook_manager: NotebookManager instance for managing notebooks
-        use_notebook_tool: UseNotebookTool instance for enrolling notebooks
+        use_notebook_tool: RegisterNotebookTool instance for enrolling notebooks
         server_context: ServerContext instance with server state
     """
     # Check if document_id is configured and not already managed
@@ -91,4 +91,4 @@ async def auto_enroll_document(
         )
         logger.info(f"Auto-enrollment result: {result}")
     except Exception as e:
-        logger.warning(f"Failed to auto-enroll document: {e}. You can manually use it with use_notebook tool.")
+        logger.warning(f"Failed to auto-enroll document: {e}. You can manually use it with register_notebook tool.")

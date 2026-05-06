@@ -11,7 +11,7 @@ from jupyter_mcp_server.utils import format_TSV
 
 
 class ListNotebooksTool(BaseTool):
-    """Tool to list all managed notebooks (that have been used via use_notebook)."""
+    """Tool to list all managed notebooks (that have been used via register_notebook)."""
     
     async def execute(
         self,
@@ -25,7 +25,7 @@ class ListNotebooksTool(BaseTool):
     ) -> str:
         """Execute the list_notebooks tool.
         
-        This tool lists all notebooks that have been managed through the use_notebook tool.
+        This tool lists all notebooks that have been managed through the register_notebook tool.
         It does NOT perform recursive filesystem scanning.
         
         Args:
@@ -43,7 +43,7 @@ class ListNotebooksTool(BaseTool):
         managed_notebooks = notebook_manager.list_all_notebooks()
         
         if not managed_notebooks:
-            return "No managed notebooks. Use the use_notebook tool to manage notebooks first."
+            return "No managed notebooks. Use the register_notebook tool to manage notebooks first."
         
         # Create TSV formatted output
         headers = ["Name", "Path", "Kernel_ID", "Kernel_Status", "Activate"]

@@ -24,8 +24,8 @@ pytestmark = pytest.mark.skipif(
 async def test_jupyter_cite(mcp_client: MCPClient):
     """Test jupyter cite prompt feature"""
     async with mcp_client:
-        await mcp_client.use_notebook("new", "new.ipynb")
-        await mcp_client.use_notebook("notebook", "notebook.ipynb")
+        await mcp_client.register_notebook("new", "new.ipynb")
+        await mcp_client.register_notebook("notebook", "notebook.ipynb")
         # Test prompt injection
         response = await mcp_client.jupyter_cite(prompt="test prompt", cell_indices="0")
         assert "# Matplotlib Examples" in response[0], "Cell 0 should contain Matplotlib Examples"

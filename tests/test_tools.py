@@ -346,7 +346,7 @@ async def test_multi_notebook_operations(mcp_client_parametrized: MCPClient):
 
     async with mcp_client_parametrized:
         # Connect to the new notebook
-        result = await mcp_client_parametrized.use_notebook("notebook_a", "new.ipynb")
+        result = await mcp_client_parametrized.register_notebook("notebook_a", "new.ipynb")
         logging.debug(f"Connect to notebook A: {result}")
         assert "Successfully activate notebook 'notebook_a'" in result
 
@@ -354,7 +354,7 @@ async def test_multi_notebook_operations(mcp_client_parametrized: MCPClient):
         await mcp_client_parametrized.insert_cell(-1, "markdown", marker_a)
 
         # Try to connect to notebook.ipynb as notebook_b
-        result = await mcp_client_parametrized.use_notebook("notebook_b", "notebook.ipynb")
+        result = await mcp_client_parametrized.register_notebook("notebook_b", "notebook.ipynb")
         logging.debug(f"Connect to notebook B: {result}")
         assert "Successfully activate notebook 'notebook_b'" in result
 
@@ -362,7 +362,7 @@ async def test_multi_notebook_operations(mcp_client_parametrized: MCPClient):
         await mcp_client_parametrized.insert_cell(-1, "markdown", marker_b)
 
         # Switch back to notebook A
-        result = await mcp_client_parametrized.use_notebook("notebook_a", "new.ipynb")
+        result = await mcp_client_parametrized.register_notebook("notebook_a", "new.ipynb")
         logging.debug(f"Reactivate notebook A: {result}")
         assert "Reactivating notebook 'notebook_a' and deactivating 'notebook_b'." in result
 
@@ -371,7 +371,7 @@ async def test_multi_notebook_operations(mcp_client_parametrized: MCPClient):
         assert marker_a in cell_list_a
 
         # Switch to notebook B and verify
-        await mcp_client_parametrized.use_notebook("notebook_b", "notebook.ipynb")
+        await mcp_client_parametrized.register_notebook("notebook_b", "notebook.ipynb")
         cell_list_b = await mcp_client_parametrized.read_notebook("notebook_b", response_format="detailed", limit=100)
         assert marker_b in cell_list_b
 
@@ -387,10 +387,10 @@ async def test_multi_notebook_operations(mcp_client_parametrized: MCPClient):
         assert "Notebook 'notebook_a' kernel restarted successfully" in restart_result
 
         # Clean up - unuse both notebooks
-        result = await mcp_client_parametrized.unuse_notebook("notebook_a")
+        result = await mcp_client_parametrized.unregister_notebook("notebook_a")
         logging.debug(f"Unuse notebook A: {result}")
         assert "Notebook 'notebook_a' unused successfully" in result
-        result = await mcp_client_parametrized.unuse_notebook("notebook_b")
+        result = await mcp_client_parametrized.unregister_notebook("notebook_b")
         logging.debug(f"Unuse notebook B: {result}")
         assert "Notebook 'notebook_b' unused successfully" in result
 
@@ -401,7 +401,7 @@ async def test_notebooks_error_cases(mcp_client_parametrized: MCPClient):
     """Test error handling for notebook management in both modes"""
     async with mcp_client_parametrized:
         # Test connecting to non-existent notebook (with required notebook_path parameter)
-        error_result = await mcp_client_parametrized.use_notebook("nonexistent", "nonexistent.ipynb")
+        error_result = await mcp_client_parametrized.register_notebook("nonexistent", "nonexistent.ipynb")
         logging.debug(f"Nonexistent notebook result: {error_result}")
         assert "not found" in error_result
         
@@ -409,21 +409,21 @@ async def test_notebooks_error_cases(mcp_client_parametrized: MCPClient):
         restart_error = await mcp_client_parametrized.restart_notebook("nonexistent_notebook")
         assert "not connected" in restart_error
         
-        disconnect_error = await mcp_client_parametrized.unuse_notebook("nonexistent_notebook") 
+        disconnect_error = await mcp_client_parametrized.unregister_notebook("nonexistent_notebook") 
         assert "not connected" in disconnect_error
 
 
 @pytest.mark.asyncio
 @timeout_wrapper(60)
 async def test_read_cell_without_active_notebook(mcp_client_parametrized: MCPClient):
-    """Test read_cell does not raise a cryptic exception when called without use_notebook.
+    """Test read_cell does not raise a cryptic exception when called without register_notebook.
 
     Regression test for #208: in JUPYTER_SERVER mode, calling read_cell without
-    first calling use_notebook previously raised 'quote_from_bytes() expected bytes'
+    first calling register_notebook previously raised 'quote_from_bytes() expected bytes'
     deep inside the contents manager because None was passed as the notebook path.
 
     After the fix, read_cell must return a well-formed result in both modes:
-    - JUPYTER_SERVER: returns a helpful error message mentioning use_notebook
+    - JUPYTER_SERVER: returns a helpful error message mentioning register_notebook
     - MCP_SERVER: returns actual cell data from the pre-configured default notebook
 
     The assertion is intentionally content-based rather than mode-based to avoid
@@ -440,9 +440,9 @@ async def test_read_cell_without_active_notebook(mcp_client_parametrized: MCPCli
         assert isinstance(result["result"], list), "Result should be a list"
 
         result_text = " ".join(str(item) for item in result["result"])
-        assert "=====Cell 0" in result_text or "use_notebook" in result_text.lower(), (
+        assert "=====Cell 0" in result_text or "register_notebook" in result_text.lower(), (
             f"Expected either cell data ('=====Cell 0') or a helpful error message "
-            f"('use_notebook'), but got: {result_text[:300]}"
+            f"('register_notebook'), but got: {result_text[:300]}"
         )
 
 
