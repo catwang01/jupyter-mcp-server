@@ -200,7 +200,7 @@ class ExecuteCellTool(BaseTool):
                     code_to_execute = cell_source.to_py()
 
                 if not code_to_execute or not code_to_execute.strip():
-                    return []
+                    return ["[No output generated]"]
 
                 document_id = f"json:notebook:{file_id}"
 
@@ -232,7 +232,7 @@ class ExecuteCellTool(BaseTool):
 
                 code_to_execute = cell.source
                 if not code_to_execute.strip():
-                    return []
+                    return ["[No output generated]"]
 
                 # Execute without RTC metadata
                 outputs = await execute_via_execution_stack(
@@ -354,6 +354,8 @@ class ExecuteCellTool(BaseTool):
                         # Get final outputs
                         outputs = notebook[cell_index].get("outputs", [])
                         result = safe_extract_outputs(outputs)
+                        if not result:
+                            result = ["[No output generated]"]
 
                         logger.info(f"Cell {cell_index} completed successfully with {len(result)} outputs")
                         await hooks.fire(
