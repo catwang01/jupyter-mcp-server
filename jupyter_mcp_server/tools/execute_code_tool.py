@@ -54,7 +54,8 @@ class ExecuteCodeTool(BaseTool):
         timeout: int,
         ensure_kernel_alive_fn,
         wait_for_kernel_idle_fn,
-        safe_extract_outputs_fn
+        safe_extract_outputs_fn,
+        notebook_name: str = "",
     ) -> list[Union[str, ImageContent]]:
         """Execute code using notebook_manager (MCP_SERVER mode - original logic)."""
         # Get current notebook name and kernel
@@ -106,6 +107,8 @@ class ExecuteCodeTool(BaseTool):
             # Process and extract outputs
             if outputs:
                 result = safe_extract_outputs_fn(outputs['outputs'])
+                if not result:
+                    result = ["[No output generated]"]
                 logger.info(f"IPython execution completed successfully with {len(result)} outputs")
             else:
                 result = ["[No output generated]"]
@@ -214,7 +217,8 @@ class ExecuteCodeTool(BaseTool):
                 timeout=timeout,
                 ensure_kernel_alive_fn=ensure_kernel_alive_fn,
                 wait_for_kernel_idle_fn=wait_for_kernel_idle_fn,
-                safe_extract_outputs_fn=safe_extract_outputs_fn
+                safe_extract_outputs_fn=safe_extract_outputs_fn,
+                notebook_name=notebook_name,
             )
         
         else:

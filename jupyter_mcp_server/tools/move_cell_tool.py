@@ -129,6 +129,7 @@ class MoveCellTool(BaseTool):
         notebook_manager: NotebookManager,
         source_index: int,
         target_index: int,
+        notebook_name: str = "",
     ) -> tuple[Notebook, dict]:
         """Move cell using WebSocket connection (MCP_SERVER mode).
 
@@ -200,7 +201,7 @@ class MoveCellTool(BaseTool):
 
         elif mode == ServerMode.MCP_SERVER and notebook_manager is not None:
             nb, cell_info = await self._move_cell_websocket(
-                notebook_manager, source_index, target_index
+                notebook_manager, source_index, target_index, notebook_name=notebook_name
             )
         else:
             raise ValueError(f"Invalid mode or missing required clients: mode={mode}")

@@ -126,6 +126,7 @@ class EditCellSourceTool(BaseTool):
     async def _edit_cell_websocket(
         self, notebook_manager: NotebookManager, cell_index: int,
         old_string: str, new_string: str, replace_all: bool,
+        notebook_name: str = "",
     ) -> str:
         _nb = notebook_name or notebook_manager.get_current_notebook() or "default"
         async with notebook_manager.get_notebook_connection(_nb) as notebook:
@@ -193,6 +194,7 @@ class EditCellSourceTool(BaseTool):
             diff = await self._edit_cell_websocket(
                 notebook_manager, cell_index,
                 old_string, new_string, replace_all,
+                notebook_name=notebook_name,
             )
         else:
             raise ValueError(f"Invalid mode or missing required clients: mode={mode}")

@@ -101,7 +101,8 @@ class DeleteCellTool(BaseTool):
     async def _delete_cell_websocket(
         self,
         notebook_manager: NotebookManager,
-        cell_indices: list[int]
+        cell_indices: list[int],
+        notebook_name: str = "",
     ) -> list:
         """Delete cell using WebSocket connection (MCP_SERVER mode).
         
@@ -187,7 +188,7 @@ class DeleteCellTool(BaseTool):
                 
         elif mode == ServerMode.MCP_SERVER and notebook_manager is not None:
             # MCP_SERVER mode: Use WebSocket connection
-            cells = await self._delete_cell_websocket(notebook_manager, cell_indices)
+            cells = await self._delete_cell_websocket(notebook_manager, cell_indices, notebook_name=notebook_name)
         else:
             raise ValueError(f"Invalid mode or missing required clients: mode={mode}")
         

@@ -147,7 +147,8 @@ class InsertCellTool(BaseTool):
         notebook_manager: NotebookManager,
         cell_index: int,
         cell_type: Literal["code", "markdown"],
-        cell_source: str
+        cell_source: str,
+        notebook_name: str = "",
     ) -> tuple[Notebook, int, int]:
         """Insert cell using WebSocket connection (MCP_SERVER mode).
         
@@ -263,7 +264,7 @@ class InsertCellTool(BaseTool):
         elif mode == ServerMode.MCP_SERVER and notebook_manager is not None:
             # MCP_SERVER mode: Use WebSocket connection with unified insert_cell pattern
             notebook, actual_index, new_total_cells = await self._insert_cell_websocket(
-                notebook_manager, cell_index, cell_type, cell_source
+                notebook_manager, cell_index, cell_type, cell_source, notebook_name=notebook_name
             )
         else:
             raise ValueError(f"Invalid mode or missing required clients: mode={mode}")
