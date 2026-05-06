@@ -10,12 +10,6 @@ that can operate in either MCP_SERVER or JUPYTER_SERVER mode.
 
 from jupyter_mcp_server.tools._base import BaseTool, ServerMode
 
-# Import tool implementations - Notebook Management
-from jupyter_mcp_server.tools.list_notebooks_tool import ListNotebooksTool
-from jupyter_mcp_server.tools.restart_notebook_tool import RestartNotebookTool
-from jupyter_mcp_server.tools.unregister_notebook_tool import UnregisterNotebookTool
-from jupyter_mcp_server.tools.register_notebook_tool import RegisterNotebookTool
-
 # Import tool implementations - Cell Reading
 from jupyter_mcp_server.tools.read_notebook_tool import ReadNotebookTool
 from jupyter_mcp_server.tools.read_cell_tool import ReadCellTool
@@ -30,10 +24,21 @@ from jupyter_mcp_server.tools.move_cell_tool import MoveCellTool
 # Import tool implementations - Cell Execution
 from jupyter_mcp_server.tools.execute_cell_tool import ExecuteCellTool
 
+# Import tool implementations - Kernel Management
+from jupyter_mcp_server.tools.create_kernel_tool import CreateKernelTool
+from jupyter_mcp_server.tools.delete_kernel_tool import DeleteKernelTool
+from jupyter_mcp_server.tools.restart_kernel_tool import RestartKernelTool
+from jupyter_mcp_server.tools.list_kernels_tool import ListKernelsTool
+from jupyter_mcp_server.tools.list_kernel_specs_tool import ListKernelSpecsTool
+from jupyter_mcp_server.tools.list_notebooks_tool import ListNotebooksTool
+
+# Import tool implementations - Kernel-Notebook Association
+from jupyter_mcp_server.tools.attach_kernel_tool import AttachKernelTool
+from jupyter_mcp_server.tools.detach_kernel_tool import DetachKernelTool
+
 # Import tool implementations - Other Tools
 from jupyter_mcp_server.tools.execute_code_tool import ExecuteCodeTool
 from jupyter_mcp_server.tools.list_files_tool import ListFilesTool
-from jupyter_mcp_server.tools.list_kernels_tool import ListKernelsTool
 from jupyter_mcp_server.tools.connect_jupyter_tool import ConnectJupyterTool
 
 # Import MCP prompt
@@ -42,11 +47,6 @@ from jupyter_mcp_server.tools.jupyter_cite_prompt import JupyterCitePrompt
 __all__ = [
     "BaseTool",
     "ServerMode",
-    # Notebook Management
-    "ListNotebooksTool",
-    "RestartNotebookTool",
-    "UnregisterNotebookTool",
-    "RegisterNotebookTool",
     # Cell Reading
     "ReadNotebookTool",
     "ReadCellTool",
@@ -58,13 +58,21 @@ __all__ = [
     "MoveCellTool",
     # Cell Execution
     "ExecuteCellTool",
+    # Kernel Management
+    "CreateKernelTool",
+    "DeleteKernelTool",
+    "RestartKernelTool",
+    "ListKernelsTool",
+    "ListKernelSpecsTool",
+    # Notebook Status
+    "ListNotebooksTool",
+    # Kernel-Notebook Association
+    "AttachKernelTool",
+    "DetachKernelTool",
     # Other Tools
     "ExecuteCodeTool",
     "ListFilesTool",
-    "ListKernelsTool",
     "ConnectJupyterTool",
     # MCP Prompt
     "JupyterCitePrompt",
 ]
-
-

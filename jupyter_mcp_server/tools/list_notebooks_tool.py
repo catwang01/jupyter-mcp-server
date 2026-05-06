@@ -2,65 +2,44 @@
 #
 # BSD 3-Clause License
 
-"""List notebooks tool implementation."""
+"""List notebooks and their kernel attachment status."""
 
 from typing import Any, Optional
+from jupyter_server_client import JupyterServerClient
+
 from jupyter_mcp_server.tools._base import BaseTool, ServerMode
 from jupyter_mcp_server.notebook_manager import NotebookManager
 from jupyter_mcp_server.utils import format_TSV
 
 
 class ListNotebooksTool(BaseTool):
-    """Tool to list all managed notebooks (that have been used via register_notebook)."""
-    
+    """List all notebooks with their attached kernel IDs."""
+
     async def execute(
         self,
         mode: ServerMode,
-        server_client: Optional[Any] = None,
-        contents_manager: Optional[Any] = None,
-        kernel_manager: Optional[Any] = None,
-        kernel_spec_manager: Optional[Any] = None,
         notebook_manager: Optional[NotebookManager] = None,
+        server_client: Optional[JupyterServerClient] = None,
         **kwargs
     ) -> str:
-        """Execute the list_notebooks tool.
-        
-        This tool lists all notebooks that have been managed through the register_notebook tool.
-        It does NOT perform recursive filesystem scanning.
-        
+        """Return the current notebook → kernel attachment status.
+
         Args:
             mode: Server mode (MCP_SERVER or JUPYTER_SERVER)
-            notebook_manager: Notebook manager instance
+            notebook_manager: Notebook/kernel attachment registry
             **kwargs: Additional parameters (unused)
-            
+
         Returns:
-            TSV formatted table with managed notebook information
+            Tab-separated table with columns: Notebook_Path, Kernel_ID
         """
         if notebook_manager is None:
             return "No notebook manager available."
-        
-        # Get all managed notebooks
-        managed_notebooks = notebook_manager.list_all_notebooks()
-        
-        if not managed_notebooks:
-            return "No managed notebooks. Use the register_notebook tool to manage notebooks first."
-        
-        # Create TSV formatted output
-        headers = ["Name", "Path", "Kernel_ID", "Kernel_Status", "Activate"]
-        rows = []
-        
-        # Sort by name for consistent output
-        for name in sorted(managed_notebooks.keys()):
-            info = managed_notebooks[name]
-            activate_marker = "✓" if info.get("is_current") else ""
-            # Get kernel_id from notebook_manager
-            kernel_id = notebook_manager.get_kernel_id(name) or "-"
-            rows.append([
-                name,
-                info.get("path", "-"),
-                kernel_id,
-                info.get("kernel_status", "unknown"),
-                activate_marker
-            ])
-        
+
+        attachments = notebook_manager.list_attachments()
+
+        if not attachments:
+            return "No notebooks are currently attached to a kernel."
+
+        headers = ["Notebook_Path", "Kernel_ID"]
+        rows = [[path, kernel_id] for path, kernel_id in attachments.items()]
         return format_TSV(headers, rows)

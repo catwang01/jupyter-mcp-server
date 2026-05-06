@@ -21,10 +21,8 @@ from starlette.responses import JSONResponse
 from jupyter_mcp_server.log import logger
 from jupyter_mcp_server.models import DocumentRuntime
 from jupyter_mcp_server.utils import (
-    safe_extract_outputs, 
+    safe_extract_outputs,
     create_kernel,
-    start_kernel,
-    ensure_kernel_alive,
     wait_for_kernel_idle,
     safe_notebook_operation
 )
@@ -36,11 +34,6 @@ from jupyter_mcp_server.hooks import HookEvent, HookRegistry, with_hooks
 from jupyter_mcp_server.tools import (
     # Tool infrastructure
     ServerMode,
-    # Notebook Management
-    ListNotebooksTool,
-    RegisterNotebookTool,
-    RestartNotebookTool,
-    UnregisterNotebookTool,
     # Cell Reading
     ReadNotebookTool,
     ReadCellTool,
@@ -52,10 +45,20 @@ from jupyter_mcp_server.tools import (
     MoveCellTool,
     # Cell Execution
     ExecuteCellTool,
+    # Kernel Management
+    CreateKernelTool,
+    DeleteKernelTool,
+    RestartKernelTool,
+    ListKernelsTool,
+    ListKernelSpecsTool,
+    # Notebook Status
+    ListNotebooksTool,
+    # Kernel-Notebook Association
+    AttachKernelTool,
+    DetachKernelTool,
     # Other Tools
     ExecuteCodeTool,
     ListFilesTool,
-    ListKernelsTool,
     ConnectJupyterTool,
     # MCP Prompt
     JupyterCitePrompt,
@@ -112,28 +115,19 @@ notebook_manager = NotebookManager()
 server_context = ServerContext.get_instance()
 
 def __start_kernel():
-    """Start the Jupyter kernel with error handling (for backward compatibility)."""
+    """Start the default kernel for legacy /api/connect route."""
     config = get_config()
-    start_kernel(notebook_manager, config, logger)
+    kernel = create_kernel(config, logger)
+    notebook_manager.set_default_kernel(kernel.id, kernel)
 
 async def __auto_enroll_document():
     """Wrapper for auto_enroll_document that uses server context."""
     await auto_enroll_document(
         config=get_config(),
         notebook_manager=notebook_manager,
-        use_notebook_tool=RegisterNotebookTool(),
+        use_notebook_tool=None,
         server_context=server_context,
     )
-
-
-def __ensure_kernel_alive() -> KernelClient:
-    """Ensure kernel is running, restart if needed."""
-    def __create_kernel() -> KernelClient:
-        """Create a new kernel instance using current configuration."""
-        config = get_config()
-        return create_kernel(config, logger)
-    current_notebook = notebook_manager.get_current_notebook() or "default"
-    return ensure_kernel_alive(notebook_manager, current_notebook, __create_kernel)
 
 
 ###############################################################################
@@ -156,12 +150,12 @@ async def connect(request: Request):
 
     document_runtime = DocumentRuntime(**data)
 
-    # Clean up existing default notebook if any
-    if "default" in notebook_manager:
+    # Clean up existing default kernel if any
+    if notebook_manager.get_default_kernel() is not None:
         try:
-            notebook_manager.remove_notebook("default")
+            notebook_manager.clear_default_kernel()
         except Exception as e:
-            logger.warning(f"Error stopping existing notebook during connect: {e}")
+            logger.warning(f"Error stopping existing kernel during connect: {e}")
 
     # Update configuration with new values
     # String "None" values will be automatically normalized by set_config()
@@ -190,12 +184,10 @@ async def connect(request: Request):
 @mcp.custom_route("/api/stop", ["DELETE"])
 async def stop(request: Request):
     try:
-        current_notebook = notebook_manager.get_current_notebook() or "default"
-        if current_notebook in notebook_manager:
-            notebook_manager.remove_notebook(current_notebook)
+        notebook_manager.clear_default_kernel()
         return JSONResponse({"success": True})
     except Exception as e:
-        logger.error(f"Error stopping notebook: {e}")
+        logger.error(f"Error stopping kernel: {e}")
         return JSONResponse({"success": False, "error": str(e)}, status_code=500)
 
 
@@ -204,8 +196,7 @@ async def health_check(request: Request):
     """Custom health check endpoint"""
     kernel_status = "unknown"
     try:
-        current_notebook = notebook_manager.get_current_notebook() or "default"
-        kernel = notebook_manager.get_kernel(current_notebook)
+        kernel = notebook_manager.get_default_kernel()
         if kernel:
             kernel_status = "alive" if hasattr(kernel, 'is_alive') and kernel.is_alive() else "dead"
         else:
@@ -287,53 +278,172 @@ async def list_kernels() -> Annotated[str, Field(description="Tab-separated tabl
     )
 
 ###############################################################################
-# Multi-Notebook Management Tools.
+# Kernel Management Tools.
 
 
 @mcp.tool(
     annotations=ToolAnnotations(
-        title="Use Notebook",
+        title="List Kernel Specs",
+        readOnlyHint=True,
+    ),
+)
+@with_hooks("list_kernel_specs")
+async def list_kernel_specs() -> Annotated[str, Field(description="Tab-separated table with columns: Name, Display_Name, Language")]:
+    """List all available kernel specs that can be started on the Jupyter server.
+
+    Returns all installable kernel types (e.g. python3, remote SSH kernels, etc.),
+    useful for choosing a kernel_name when calling create_kernel.
+    """
+    return await safe_notebook_operation(
+        lambda: ListKernelSpecsTool().execute(
+            mode=server_context.mode,
+            server_client=server_context.server_client,
+            kernel_spec_manager=server_context.kernel_spec_manager,
+        )
+    )
+
+
+@mcp.tool(
+    annotations=ToolAnnotations(
+        title="Create Kernel",
         destructiveHint=True,
     ),
 )
-@with_hooks("register_notebook")
-async def register_notebook(
-    notebook_name: Annotated[str, Field(description="Unique identifier for the notebook")],
-    notebook_path: Annotated[str, Field(description="Path to the notebook file, relative to the Jupyter server root (e.g. 'notebook.ipynb')")],
-    mode: Annotated[Literal["connect", "create"], Field(description="Notebook operation mode: 'connect' to connect to existing and activate it, 'create' to create new and activate it")] = "connect",
-    kernel_id: Annotated[str, Field(description="Specific kernel ID to use (will create new if skipped)")] = None,
-) -> Annotated[str, Field(description="Success message with notebook information")]:
-    """Use a notebook and activate it for following cell operations.
-    All cell operations will be performed on the currently activated notebook.
-    Activate new notebook will deactivate the previously activated notebook.
-    Reactivate previously activated notebook using same notebook_name and notebook_path.
+@with_hooks("create_kernel")
+async def create_kernel_tool(
+    kernel_name: Annotated[Optional[str], Field(description="Kernel spec name (e.g. 'python3', 'ir'). Uses server default if not specified.")] = None,
+) -> Annotated[str, Field(description="Kernel ID and name")]:
+    """Create a new standalone kernel.
+
+    Returns the kernel ID. Use attach_kernel to associate it with a notebook before executing cells.
     """
     config = get_config()
-    result = await safe_notebook_operation(
-        lambda: RegisterNotebookTool().execute(
+    return await safe_notebook_operation(
+        lambda: CreateKernelTool().execute(
             mode=server_context.mode,
             server_client=server_context.server_client,
-            notebook_name=notebook_name,
-            notebook_path=notebook_path,
-            use_mode=mode,
-            kernel_id=kernel_id,
-            ensure_kernel_alive_fn=__ensure_kernel_alive,
-            contents_manager=server_context.contents_manager,
             kernel_manager=server_context.kernel_manager,
-            session_manager=server_context.session_manager,
             notebook_manager=notebook_manager,
             runtime_url=config.runtime_url if config.runtime_url != "local" else None,
             runtime_token=config.runtime_token,
+            kernel_name=kernel_name,
         )
     )
-    kid = notebook_manager.get_kernel_id(notebook_name) or "unknown"
+
+
+@mcp.tool(
+    annotations=ToolAnnotations(
+        title="Delete Kernel",
+        destructiveHint=True,
+    ),
+)
+@with_hooks("delete_kernel")
+async def delete_kernel(
+    kernel_id: Annotated[str, Field(description="ID of the kernel to delete")],
+) -> Annotated[str, Field(description="Success message")]:
+    """Stop and delete a kernel. Also detaches it from all associated notebooks."""
+    result = await safe_notebook_operation(
+        lambda: DeleteKernelTool().execute(
+            mode=server_context.mode,
+            kernel_manager=server_context.kernel_manager,
+            notebook_manager=notebook_manager,
+            kernel_id=kernel_id,
+        )
+    )
     await HookRegistry.get_instance().fire(
         HookEvent.KERNEL_LIFECYCLE,
-        event_type="started",
-        kernel_id=kid,
-        kernel_name=notebook_name,
+        event_type="stopped",
+        kernel_id=kernel_id,
+        kernel_name=kernel_id,
     )
     return result
+
+
+@mcp.tool(
+    annotations=ToolAnnotations(
+        title="Restart Kernel",
+        destructiveHint=True,
+    ),
+)
+@with_hooks("restart_kernel")
+async def restart_kernel(
+    kernel_id: Annotated[str, Field(description="ID of the kernel to restart")],
+) -> Annotated[str, Field(description="Success message")]:
+    """Restart a kernel, clearing its memory state and imported packages."""
+    result = await safe_notebook_operation(
+        lambda: RestartKernelTool().execute(
+            mode=server_context.mode,
+            kernel_manager=server_context.kernel_manager,
+            notebook_manager=notebook_manager,
+            kernel_id=kernel_id,
+        )
+    )
+    await HookRegistry.get_instance().fire(
+        HookEvent.KERNEL_LIFECYCLE,
+        event_type="restarted",
+        kernel_id=kernel_id,
+        kernel_name=kernel_id,
+    )
+    return result
+
+
+###############################################################################
+# Kernel-Notebook Association Tools.
+
+
+@mcp.tool(
+    annotations=ToolAnnotations(
+        title="Attach Kernel",
+        destructiveHint=True,
+    ),
+)
+@with_hooks("attach_kernel")
+async def attach_kernel(
+    notebook_path: Annotated[str, Field(description="Path to the notebook file, relative to the Jupyter server root (e.g. 'notebook.ipynb')")],
+    kernel_id: Annotated[str, Field(description="ID of the kernel to attach")],
+) -> Annotated[str, Field(description="Success message")]:
+    """Associate a kernel with a notebook path, enabling cell execution.
+
+    After attaching, execute_cell and insert_execute_code_cell will use this kernel.
+    A notebook can only have one kernel attached at a time.
+    """
+    config = get_config()
+    return await safe_notebook_operation(
+        lambda: AttachKernelTool().execute(
+            mode=server_context.mode,
+            server_client=server_context.server_client,
+            kernel_manager=server_context.kernel_manager,
+            notebook_manager=notebook_manager,
+            runtime_url=config.runtime_url if config.runtime_url != "local" else None,
+            runtime_token=config.runtime_token,
+            notebook_path=notebook_path,
+            kernel_id=kernel_id,
+        )
+    )
+
+
+@mcp.tool(
+    annotations=ToolAnnotations(
+        title="Detach Kernel",
+        destructiveHint=True,
+    ),
+)
+@with_hooks("detach_kernel")
+async def detach_kernel(
+    notebook_path: Annotated[str, Field(description="Path to the notebook file")],
+) -> Annotated[str, Field(description="Success message")]:
+    """Remove the kernel association from a notebook. The kernel keeps running."""
+    return await safe_notebook_operation(
+        lambda: DetachKernelTool().execute(
+            mode=server_context.mode,
+            notebook_manager=notebook_manager,
+            notebook_path=notebook_path,
+        )
+    )
+
+
+###############################################################################
+# Notebook Read/Write Tools.
 
 
 @mcp.tool(
@@ -343,66 +453,20 @@ async def register_notebook(
     ),
 )
 @with_hooks("list_notebooks")
-async def list_notebooks() -> Annotated[str, Field(description="TSV formatted table with notebook information")]:
-    """List all notebooks that have been used via register_notebook tool"""
-    return await ListNotebooksTool().execute(
-        mode=server_context.mode,
-        notebook_manager=notebook_manager,
+async def list_notebooks() -> Annotated[str, Field(description="Tab-separated table with columns: Notebook_Path, Kernel_ID")]:
+    """List all notebooks and their attached kernel IDs.
+
+    Shows the current notebook → kernel attachment status maintained by the
+    notebook manager. Only notebooks that have been explicitly attached via
+    attach_kernel appear here.
+    """
+    return await safe_notebook_operation(
+        lambda: ListNotebooksTool().execute(
+            mode=server_context.mode,
+            notebook_manager=notebook_manager,
+        )
     )
 
-
-@mcp.tool(
-    annotations=ToolAnnotations(
-        title="Restart Notebook",
-        destructiveHint=True,
-    ),
-)
-@with_hooks("restart_notebook")
-async def restart_notebook(
-    notebook_name: Annotated[str, Field(description="Notebook identifier to restart")],
-) -> Annotated[str, Field(description="Success message")]:
-    """Restart the kernel for a specific notebook."""
-    result = await RestartNotebookTool().execute(
-        mode=server_context.mode,
-        notebook_name=notebook_name,
-        notebook_manager=notebook_manager,
-        kernel_manager=server_context.kernel_manager,
-    )
-    kid = notebook_manager.get_kernel_id(notebook_name) or "unknown"
-    await HookRegistry.get_instance().fire(
-        HookEvent.KERNEL_LIFECYCLE,
-        event_type="restarted",
-        kernel_id=kid,
-        kernel_name=notebook_name,
-    )
-    return result
-
-
-@mcp.tool(
-    annotations=ToolAnnotations(
-        title="Unuse Notebook",
-        destructiveHint=True,
-    ),
-)
-@with_hooks("unregister_notebook")
-async def unregister_notebook(
-    notebook_name: Annotated[str, Field(description="Notebook identifier to disconnect")],
-) -> Annotated[str, Field(description="Success message")]:
-    """Unuse from a specific notebook and release its resources."""
-    kid = notebook_manager.get_kernel_id(notebook_name) or "unknown"
-    result = await UnregisterNotebookTool().execute(
-        mode=server_context.mode,
-        notebook_name=notebook_name,
-        notebook_manager=notebook_manager,
-        kernel_manager=server_context.kernel_manager,
-    )
-    await HookRegistry.get_instance().fire(
-        HookEvent.KERNEL_LIFECYCLE,
-        event_type="stopped",
-        kernel_id=kid,
-        kernel_name=notebook_name,
-    )
-    return result
 
 @mcp.tool(
     annotations=ToolAnnotations(
@@ -412,26 +476,19 @@ async def unregister_notebook(
 )
 @with_hooks("read_notebook")
 async def read_notebook(
-    notebook_name: Annotated[str, Field(description="Notebook identifier to read")],
-    response_format: Annotated[Literal["brief", "detailed"], Field(description="Response format: 'brief' will return first line and lines number, 'detailed' will return full cell source")] = "brief",
-    start_index: Annotated[int, Field(description="Starting index for pagination (0-based)", ge=0)] = 0,
-    limit: Annotated[int, Field(description="Maximum number of items to return (0 means no limit)", ge=0)] = 20
+    notebook_path: Annotated[str, Field(description="Path to the notebook file, relative to the Jupyter server root")],
+    response_format: Annotated[Literal["brief", "detailed"], Field(description="'brief' returns first line and line count; 'detailed' returns full cell source")] = "brief",
+    start_index: Annotated[int, Field(description="Starting cell index for pagination (0-based)", ge=0)] = 0,
+    limit: Annotated[int, Field(description="Maximum number of cells to return (0 = no limit)", ge=0)] = 20,
 ) -> Annotated[str, Field(description="Notebook content in the requested format")]:
-    """Read a notebook and return index, source content, type, execution count of each cell.
-    
-    Using brief format to get a quick overview of the notebook structure and it's useful for locating specific cells for operations like delete or insert.
-    Using detailed format to get detailed information of the notebook and it's useful for debugging and analysis.
-
-    It is recommended to use brief format with larger limit to get a overview of the notebook structure, 
-    then use detailed format with exact index and limit to get the detailed information of some specific cells.
-    """
+    """Read a notebook and return index, source content, type, and execution count of each cell."""
     return await safe_notebook_operation(
         lambda: ReadNotebookTool().execute(
             mode=server_context.mode,
             server_client=server_context.server_client,
             contents_manager=server_context.contents_manager,
             notebook_manager=notebook_manager,
-            notebook_name=notebook_name,
+            notebook_path=notebook_path,
             response_format=response_format,
             start_index=start_index,
             limit=limit,
@@ -449,12 +506,12 @@ async def read_notebook(
 )
 @with_hooks("insert_cell")
 async def insert_cell(
+    notebook_path: Annotated[str, Field(description="Path to the notebook file, relative to the Jupyter server root")],
     cell_index: Annotated[int, Field(description="Target index for insertion (0-based), use -1 to append at end", ge=-1)],
     cell_type: Annotated[Literal["code", "markdown"], Field(description="Type of cell to insert")],
     cell_source: Annotated[str, Field(description="Source content for the cell")],
-    notebook_name: Annotated[str, Field(description="Name of the notebook to operate on (from register_notebook).")],
 ) -> Annotated[str, Field(description="Success message and the structure of its surrounding cells")]:
-    """Insert a cell to specified position from the currently activated notebook."""
+    """Insert a cell at a specified position in the notebook."""
     return await safe_notebook_operation(
         lambda: InsertCellTool().execute(
             mode=server_context.mode,
@@ -462,12 +519,13 @@ async def insert_cell(
             contents_manager=server_context.contents_manager,
             kernel_manager=server_context.kernel_manager,
             notebook_manager=notebook_manager,
+            notebook_path=notebook_path,
             cell_index=cell_index,
             cell_source=cell_source,
             cell_type=cell_type,
-            notebook_name=notebook_name,
         )
     )
+
 
 @mcp.tool(
     annotations=ToolAnnotations(
@@ -477,15 +535,11 @@ async def insert_cell(
 )
 @with_hooks("overwrite_cell_source")
 async def overwrite_cell_source(
+    notebook_path: Annotated[str, Field(description="Path to the notebook file, relative to the Jupyter server root")],
     cell_index: Annotated[int, Field(description="Index of the cell to overwrite (0-based)", ge=0)],
     cell_source: Annotated[str, Field(description="New complete cell source")],
-    notebook_name: Annotated[str, Field(description="Name of the notebook to operate on (from register_notebook).")],
 ) -> Annotated[str, Field(description="Success message with diff showing changes made")]:
-    """Replace the entire source of a cell in the currently activated notebook.
-    Returns a diff showing the changes made.
-
-    Use this when rewriting a cell completely. For small, targeted changes,
-    prefer edit_cell_source instead — it is safer for partial edits."""
+    """Replace the entire source of a cell. Use edit_cell_source for small targeted changes."""
     return await safe_notebook_operation(
         lambda: OverwriteCellSourceTool().execute(
             mode=server_context.mode,
@@ -493,11 +547,12 @@ async def overwrite_cell_source(
             contents_manager=server_context.contents_manager,
             kernel_manager=server_context.kernel_manager,
             notebook_manager=notebook_manager,
+            notebook_path=notebook_path,
             cell_index=cell_index,
             cell_source=cell_source,
-            notebook_name=notebook_name,
         )
     )
+
 
 @mcp.tool(
     annotations=ToolAnnotations(
@@ -506,20 +561,13 @@ async def overwrite_cell_source(
     ),
 )
 async def edit_cell_source(
-    notebook_name: Annotated[str, Field(description="Name of the notebook to operate on (from register_notebook).")],
+    notebook_path: Annotated[str, Field(description="Path to the notebook file, relative to the Jupyter server root")],
     cell_index: Annotated[int, Field(description="Index of the cell to edit (0-based)", ge=0)],
     old_string: Annotated[str, Field(description="Exact string to find in cell source")],
     new_string: Annotated[str, Field(description="Replacement string")],
     replace_all: Annotated[bool, Field(description="Replace all occurrences (default: first only)")] = False,
 ) -> Annotated[str, Field(description="Success message with diff showing changes made")]:
-    """Perform a surgical find-and-replace within a cell's source (like an editor's Edit tool).
-    Finds `old_string` in the cell and replaces it with `new_string`. Matching is literal
-    (not regex) and may span multiple lines. By default, `old_string` must appear exactly once;
-    set `replace_all=True` for multiple occurrences. Returns a diff of the changes made.
-
-    Prefer this over overwrite_cell_source for small, targeted edits — it is safer because
-    unchanged parts of the cell are left untouched. Use read_cell first to see the current
-    source and construct an accurate old_string."""
+    """Surgical find-and-replace within a cell's source. Prefer over overwrite_cell_source for small edits."""
     return await safe_notebook_operation(
         lambda: EditCellSourceTool().execute(
             mode=server_context.mode,
@@ -527,13 +575,14 @@ async def edit_cell_source(
             contents_manager=server_context.contents_manager,
             kernel_manager=server_context.kernel_manager,
             notebook_manager=notebook_manager,
+            notebook_path=notebook_path,
             cell_index=cell_index,
             old_string=old_string,
             new_string=new_string,
             replace_all=replace_all,
-            notebook_name=notebook_name,
         )
     )
+
 
 @mcp.tool(
     annotations=ToolAnnotations(
@@ -544,13 +593,13 @@ async def edit_cell_source(
 )
 @with_hooks("execute_cell")
 async def execute_cell(
-    notebook_name: Annotated[str, Field(description="Name of the notebook to operate on (from register_notebook).")],
+    notebook_path: Annotated[str, Field(description="Path to the notebook file, relative to the Jupyter server root")],
     cell_index: Annotated[int, Field(description="Index of the cell to execute (0-based)", ge=0)],
     timeout: Annotated[int, Field(description="Maximum seconds to wait for execution")] = 90,
-    stream: Annotated[bool, Field(description="Enable streaming progress (including time indicator) updates for long-running cells")] = False,
+    stream: Annotated[bool, Field(description="Enable streaming progress updates for long-running cells")] = False,
     progress_interval: Annotated[int, Field(description="Seconds between progress updates when stream=True")] = 5,
 ) -> Annotated[list[str | ImageContent], Field(description="List of outputs from the executed cell")]:
-    """Execute a cell from the currently activated notebook with timeout and return it's outputs"""
+    """Execute a cell. Requires a kernel to be attached to this notebook via attach_kernel."""
     return await safe_notebook_operation(
         lambda: ExecuteCellTool().execute(
             mode=server_context.mode,
@@ -558,15 +607,15 @@ async def execute_cell(
             contents_manager=server_context.contents_manager,
             kernel_manager=server_context.kernel_manager,
             notebook_manager=notebook_manager,
+            notebook_path=notebook_path,
             cell_index=cell_index,
             timeout_seconds=timeout,
             stream=stream,
             progress_interval=progress_interval,
-            ensure_kernel_alive_fn=__ensure_kernel_alive,
-            notebook_name=notebook_name,
         ),
         max_retries=1
     )
+
 
 @mcp.tool(
     annotations=ToolAnnotations(
@@ -577,13 +626,12 @@ async def execute_cell(
 )
 @with_hooks("insert_execute_code_cell")
 async def insert_execute_code_cell(
-    notebook_name: Annotated[str, Field(description="Name of the notebook to operate on (from register_notebook).")],
-    cell_index: Annotated[int, Field(description="Index of the cell to insert and execute (0-based)", ge=-1)],
+    notebook_path: Annotated[str, Field(description="Path to the notebook file, relative to the Jupyter server root")],
+    cell_index: Annotated[int, Field(description="Index at which to insert and execute (0-based)", ge=-1)],
     cell_source: Annotated[str, Field(description="Code source for the cell")],
     timeout: Annotated[int, Field(description="Maximum seconds to wait for execution")] = 90,
 ) -> Annotated[list[str | ImageContent], Field(description="List of outputs from the executed cell")]:
-    """Insert a cell at specified index from the currently activated notebook and then execute it with timeout and return it's outputs
-    It is a shortcut tool for insert_cell and execute_cell tools, recommended to use if you want to insert a cell and execute it at the same time"""
+    """Insert a code cell and immediately execute it. Requires a kernel attached via attach_kernel."""
     await safe_notebook_operation(
         lambda: InsertCellTool().execute(
             mode=server_context.mode,
@@ -591,10 +639,10 @@ async def insert_execute_code_cell(
             contents_manager=server_context.contents_manager,
             kernel_manager=server_context.kernel_manager,
             notebook_manager=notebook_manager,
+            notebook_path=notebook_path,
             cell_index=cell_index,
             cell_source=cell_source,
             cell_type="code",
-            notebook_name=notebook_name,
         )
     )
 
@@ -605,15 +653,15 @@ async def insert_execute_code_cell(
             contents_manager=server_context.contents_manager,
             kernel_manager=server_context.kernel_manager,
             notebook_manager=notebook_manager,
+            notebook_path=notebook_path,
             cell_index=cell_index,
             timeout_seconds=timeout,
             stream=False,
             progress_interval=0,
-            ensure_kernel_alive_fn=__ensure_kernel_alive,
-            notebook_name=notebook_name,
         ),
         max_retries=1
     )
+
 
 @mcp.tool(
     annotations=ToolAnnotations(
@@ -624,22 +672,23 @@ async def insert_execute_code_cell(
 )
 @with_hooks("read_cell")
 async def read_cell(
-    notebook_name: Annotated[str, Field(description="Name of the notebook to operate on (from register_notebook).")],
+    notebook_path: Annotated[str, Field(description="Path to the notebook file, relative to the Jupyter server root")],
     cell_index: Annotated[int, Field(description="Index of the cell to read (0-based)", ge=0)],
     include_outputs: Annotated[bool, Field(description="Include outputs in the response (only for code cells)")] = True,
-) -> Annotated[list[str | ImageContent], Field(description="Cell information including index, type, source, and outputs (for code cells)")]:
-    """Read a specific cell from the currently activated notebook and return it's metadata (index, type, execution count), source and outputs (for code cells)"""
+) -> Annotated[list[str | ImageContent], Field(description="Cell information including index, type, source, and outputs")]:
+    """Read a specific cell from a notebook."""
     return await safe_notebook_operation(
         lambda: ReadCellTool().execute(
             mode=server_context.mode,
             server_client=server_context.server_client,
             contents_manager=server_context.contents_manager,
             notebook_manager=notebook_manager,
+            notebook_path=notebook_path,
             cell_index=cell_index,
             include_outputs=include_outputs,
-            notebook_name=notebook_name,
         )
     )
+
 
 @mcp.tool(
     annotations=ToolAnnotations(
@@ -649,11 +698,11 @@ async def read_cell(
 )
 @with_hooks("delete_cell")
 async def delete_cell(
-    notebook_name: Annotated[str, Field(description="Name of the notebook to operate on (from register_notebook).")],
-    cell_indices: Annotated[list[int], Field(description="List of cell indices to delete (0-based)",min_items=1)],
+    notebook_path: Annotated[str, Field(description="Path to the notebook file, relative to the Jupyter server root")],
+    cell_indices: Annotated[list[int], Field(description="List of cell indices to delete (0-based)", min_items=1)],
     include_source: Annotated[bool, Field(description="Whether to include the source of deleted cells")] = True,
-) -> Annotated[str, Field(description="Success message with list of deleted cells and their source (if include_source=True)")]:
-    """Delete specific cells from the currently activated notebook and return the cell source of deleted cells (if include_source=True)."""
+) -> Annotated[str, Field(description="Success message with list of deleted cells")]:
+    """Delete specific cells from a notebook."""
     return await safe_notebook_operation(
         lambda: DeleteCellTool().execute(
             mode=server_context.mode,
@@ -661,9 +710,9 @@ async def delete_cell(
             contents_manager=server_context.contents_manager,
             kernel_manager=server_context.kernel_manager,
             notebook_manager=notebook_manager,
+            notebook_path=notebook_path,
             cell_indices=cell_indices,
             include_source=include_source,
-            notebook_name=notebook_name,
         )
     )
 
@@ -675,18 +724,11 @@ async def delete_cell(
     ),
 )
 async def move_cell(
+    notebook_path: Annotated[str, Field(description="Path to the notebook file, relative to the Jupyter server root")],
     source_index: Annotated[int, Field(description="Index of the cell to move (0-based)", ge=0)],
-    target_index: Annotated[int, Field(description="Destination index where the cell will end up (0-based)", ge=0)],
-    notebook_name: Annotated[str, Field(description="Name of the notebook to operate on (from register_notebook).")],
-) -> Annotated[str, Field(description="Success message with moved cell info and surrounding context")]:
-    """Move a cell from source_index to target_index within the currently activated notebook.
-
-    The cell is removed from source_index and placed at target_index. Cells in between shift
-    to fill the gap. The cell's type, source, and outputs are preserved.
-    Example: in a notebook [A, B, C, D], move_cell(1, 3) produces [A, C, D, B].
-
-    Use this tool instead of manually deleting and re-inserting a cell — it is atomic and
-    preserves cell metadata. Use read_notebook first to see cell indices if needed."""
+    target_index: Annotated[int, Field(description="Destination index (0-based)", ge=0)],
+) -> Annotated[str, Field(description="Success message with moved cell info")]:
+    """Move a cell from source_index to target_index within a notebook."""
     return await safe_notebook_operation(
         lambda: MoveCellTool().execute(
             mode=server_context.mode,
@@ -694,9 +736,9 @@ async def move_cell(
             contents_manager=server_context.contents_manager,
             kernel_manager=server_context.kernel_manager,
             notebook_manager=notebook_manager,
+            notebook_path=notebook_path,
             source_index=source_index,
             target_index=target_index,
-            notebook_name=notebook_name,
         )
     )
 
@@ -710,32 +752,15 @@ async def move_cell(
 )
 @with_hooks("execute_code")
 async def execute_code(
-    notebook_name: Annotated[str, Field(description="Name of the notebook to operate on (from register_notebook).")],
+    kernel_id: Annotated[str, Field(description="ID of the kernel to execute code in")],
     code: Annotated[str, Field(description="Code to execute (supports magic commands with %, shell commands with !)")],
-    timeout: Annotated[int, Field(description="Execution timeout in seconds",le=60)] = 30,
+    timeout: Annotated[int, Field(description="Execution timeout in seconds", le=60)] = 30,
 ) -> Annotated[list[str | ImageContent], Field(description="List of outputs from the executed code")]:
-    """Execute code directly in the kernel (not saved to notebook) on the current activated notebook.
+    """Execute code directly in a kernel (not saved to notebook).
 
-    Recommended to use in following cases:
-    1. Execute Jupyter magic commands(e.g., `%timeit`, `%pip install xxx`)
-    2. Performance profiling and debugging.
-    3. View intermediate variable values(e.g., `print(xxx)`, `df.head()`)
-    4. Temporary calculations and quick tests(e.g., `np.mean(df['xxx'])`)
-    5. Execute Shell commands in Jupyter server(e.g., `!git xxx`)
-
-    Under no circumstances should you use this tool to:
-    1. Import new modules or perform variable assignments that affect subsequent Notebook execution
-    2. Execute dangerous code that may harm the Jupyter server or the user's data without permission
+    Use for: magic commands (%timeit, %pip install), profiling, inspecting variables,
+    temporary calculations, shell commands (!git ...).
     """
-    # Get kernel_id for JUPYTER_SERVER mode
-    # Let the tool handle getting kernel_id via get_current_notebook_context()
-    kernel_id = None
-    if server_context.mode == ServerMode.JUPYTER_SERVER:
-        current_notebook = notebook_name or notebook_manager.get_current_notebook() or "default"
-        kernel_id = notebook_manager.get_kernel_id(current_notebook)
-        # Note: kernel_id might be None here if notebook not in manager,
-        # but the tool will fall back to config values via get_current_notebook_context()
-    
     return await safe_notebook_operation(
         lambda: ExecuteCodeTool().execute(
             mode=server_context.mode,
@@ -745,10 +770,8 @@ async def execute_code(
             code=code,
             timeout=timeout,
             kernel_id=kernel_id,
-            ensure_kernel_alive_fn=__ensure_kernel_alive,
             wait_for_kernel_idle_fn=wait_for_kernel_idle,
             safe_extract_outputs_fn=safe_extract_outputs,
-            notebook_name=notebook_name,
         ),
         max_retries=1
     )
@@ -794,7 +817,7 @@ async def connect_to_jupyter(
 async def jupyter_cite(
     prompt: Annotated[str, Field(description="User prompt for the cited cells")],
     cell_indices: Annotated[str, Field(description="Cell indices to cite (0-based),supporting flexible range format, e.g., '0,1,2', '0-2' or '0-2,4'")],
-    notebook_name: Annotated[str, Field(description="Name of the notebook to cite cells from (from register_notebook).")],
+    notebook_path: Annotated[str, Field(description="Path to the notebook file, relative to the Jupyter server root")],
 ):
     """
     Like @ or # in Coding IDE or CLI, cite specific cells from specified notebook and insert them into the prompt.
@@ -806,7 +829,7 @@ async def jupyter_cite(
             contents_manager=server_context.contents_manager,
             notebook_manager=notebook_manager,
             cell_indices=cell_indices,
-            notebook_name=notebook_name,
+            notebook_path=notebook_path,
             prompt=prompt,
         )
     )

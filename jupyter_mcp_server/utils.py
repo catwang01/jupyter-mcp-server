@@ -32,10 +32,9 @@ def get_current_notebook_context(notebook_manager=None, notebook_name: str = "")
     kernel_id = None
 
     if notebook_manager:
-        # Prefer explicit notebook_name; fall back to currently-active notebook
-        resolved = notebook_name or notebook_manager.get_current_notebook() or "default"
-        notebook_path = notebook_manager.get_notebook_path(resolved)
-        kernel_id = notebook_manager.get_kernel_id(resolved)
+        # In new architecture, notebook_name IS the notebook_path (not a logical name)
+        notebook_path = notebook_name if notebook_name else None
+        kernel_id = notebook_manager.get_kernel_id(notebook_name) if notebook_name else None
 
     # Fallback to config if still not found
     if not notebook_path or not kernel_id:
@@ -283,13 +282,12 @@ def create_kernel(config, logger):
 def start_kernel(notebook_manager, config, logger):
     """Start the Jupyter kernel with error handling (for backward compatibility)."""
     try:
-        # Remove existing default notebook if any
-        if "default" in notebook_manager:
-            notebook_manager.remove_notebook("default")
-        
+        # Clear any existing default kernel
+        notebook_manager.clear_default_kernel()
+
         # Create and set up new kernel
         kernel = create_kernel(config, logger)
-        notebook_manager.add_notebook("default", kernel)
+        notebook_manager.set_default_kernel("default", kernel)
         logger.info("Default notebook kernel started successfully")
     except Exception as e:
         logger.error(f"Failed to start kernel: {e}")
@@ -298,7 +296,9 @@ def start_kernel(notebook_manager, config, logger):
 
 def ensure_kernel_alive(notebook_manager, current_notebook, create_kernel_fn):
     """Ensure kernel is running, restart if needed."""
-    return notebook_manager.ensure_kernel_alive(current_notebook, create_kernel_fn)
+    kernel_id = notebook_manager.get_kernel_id(current_notebook)
+    if kernel_id:
+        notebook_manager.restart_kernel_client(kernel_id)
 
 
 async def execute_cell_with_forced_sync(notebook, cell_index, kernel, timeout_seconds = 300):

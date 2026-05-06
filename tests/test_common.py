@@ -27,11 +27,14 @@ from mcp.client.streamable_http import streamable_http_client
 
 # TODO: could be retrieved from code (inspect)
 JUPYTER_TOOLS = [
-    # Multi-Notebook Management Tools
-    "register_notebook",
-    "list_notebooks", 
-    "restart_notebook",
-    "unregister_notebook",
+    # Kernel Management Tools
+    "create_kernel",
+    "delete_kernel",
+    "restart_kernel",
+    # Kernel-Notebook Association Tools
+    "attach_kernel",
+    "detach_kernel",
+    # Notebook Reading
     "read_notebook",
     # Cell Tools
     "insert_cell",
@@ -46,7 +49,9 @@ JUPYTER_TOOLS = [
     # Server Management Tools
     "list_files",
     "list_kernels",
-    "connect_to_jupyter"
+    "list_kernel_specs",
+    "list_notebooks",
+    "connect_to_jupyter",
 ]
 
 
@@ -281,70 +286,47 @@ class MCPClient:
     async def list_tools(self):
         return await self._session.list_tools()  # type: ignore
 
-    # Multi-Notebook Management Methods
-    @requires_session
-    async def register_notebook(self, notebook_name, notebook_path=None, mode="connect", kernel_id=None):
-        arguments = {
-            "notebook_name": notebook_name, 
-            "mode": mode,
-        }
-        # Only add notebook_path if provided (for switching, it's optional)
-        if notebook_path is not None:
-            arguments["notebook_path"] = notebook_path
-        
-        # Only add kernel_id if provided (not None)
-        if kernel_id is not None:
-            arguments["kernel_id"] = kernel_id
-        
-        result = await self._session.call_tool("register_notebook", arguments=arguments)  # type: ignore
-        return self._extract_text_content(result)
-    
-    @requires_session
-    async def list_notebooks(self):
-        result = await self._session.call_tool("list_notebooks")  # type: ignore
-        return self._extract_text_content(result)
-    
-    @requires_session
-    async def restart_notebook(self, notebook_name):
-        result = await self._session.call_tool("restart_notebook", arguments={"notebook_name": notebook_name})  # type: ignore
-        return self._extract_text_content(result)
-    
-    @requires_session
-    async def unregister_notebook(self, notebook_name):
-        result = await self._session.call_tool("unregister_notebook", arguments={"notebook_name": notebook_name})  # type: ignore
-        return self._extract_text_content(result)
-    
-    @requires_session
-    async def read_notebook(self, notebook_name, response_format="brief", start_index=0, limit=20):
-        result = await self._session.call_tool("read_notebook", arguments={"notebook_name": notebook_name, "response_format": response_format, "start_index": start_index, "limit": limit})  # type: ignore
-        return self._extract_text_content(result)
-    
-    @requires_session
-    async def insert_cell(self, cell_index, cell_type, cell_source):
-        result = await self._call_tool_safe("insert_cell", {"cell_index": cell_index, "cell_type": cell_type, "cell_source": cell_source})
-        return self._get_structured_content_safe(result) if result else None
+    # -------------------------------------------------------------------------
+    # Kernel Management Methods
+    # -------------------------------------------------------------------------
 
     @requires_session
-    async def insert_execute_code_cell(self, cell_index, cell_source, timeout=90):
-        result = await self._call_tool_safe("insert_execute_code_cell", {"cell_index": cell_index, "cell_source": cell_source, "timeout": timeout})
-        structured = self._get_structured_content_safe(result) if result else None
-        
-        # Special handling for insert_execute_code_cell: tool returns list[str | ImageContent]
-        # In JUPYTER_SERVER mode, the list gets flattened to a single string in TextContent
-        # In MCP_SERVER mode, it's properly wrapped in structured content as {"result": [...]}
-        if structured and "result" in structured:
-            result_value = structured["result"]
-            # If result is not already a list, wrap it in a list to match the tool's return type
-            if not isinstance(result_value, list):
-                # Wrap the single value in a list
-                structured["result"] = [result_value]
-        return structured
+    async def create_kernel(self, kernel_name=None):
+        """Create a new standalone kernel. Returns the result text (contains kernel ID)."""
+        arguments = {}
+        if kernel_name is not None:
+            arguments["kernel_name"] = kernel_name
+        result = await self._session.call_tool("create_kernel", arguments=arguments)  # type: ignore
+        return self._extract_text_content(result)
 
     @requires_session
-    async def read_cell(self, cell_index, include_outputs=True):
-        result = await self._call_tool_safe("read_cell", {"cell_index": cell_index, "include_outputs": include_outputs})
-        return self._get_structured_content_safe(result) if result else None
-    
+    async def delete_kernel(self, kernel_id):
+        result = await self._session.call_tool("delete_kernel", arguments={"kernel_id": kernel_id})  # type: ignore
+        return self._extract_text_content(result)
+
+    @requires_session
+    async def restart_kernel(self, kernel_id):
+        result = await self._session.call_tool("restart_kernel", arguments={"kernel_id": kernel_id})  # type: ignore
+        return self._extract_text_content(result)
+
+    @requires_session
+    async def attach_kernel(self, notebook_path, kernel_id):
+        """Attach a kernel to a notebook path."""
+        result = await self._session.call_tool(
+            "attach_kernel",
+            arguments={"notebook_path": notebook_path, "kernel_id": kernel_id},
+        )  # type: ignore
+        return self._extract_text_content(result)
+
+    @requires_session
+    async def detach_kernel(self, notebook_path):
+        """Detach the kernel from a notebook path. Kernel keeps running."""
+        result = await self._session.call_tool(
+            "detach_kernel",
+            arguments={"notebook_path": notebook_path},
+        )  # type: ignore
+        return self._extract_text_content(result)
+
     @requires_session
     async def list_kernels(self):
         """List all available kernels"""
@@ -352,26 +334,70 @@ class MCPClient:
         return self._extract_text_content(result)
 
     @requires_session
-    async def move_cell(self, source_index: int, target_index: int):
-        result = await self._call_tool_safe("move_cell", {"source_index": source_index, "target_index": target_index})
+    async def list_kernel_specs(self):
+        """List all kernel specs that can be started."""
+        result = await self._session.call_tool("list_kernel_specs")  # type: ignore
+        return self._extract_text_content(result)
+
+    @requires_session
+    async def list_notebooks(self):
+        """List all notebooks with their attached kernel IDs."""
+        result = await self._session.call_tool("list_notebooks")  # type: ignore
+        return self._extract_text_content(result)
+
+    async def get_first_kernel_id(self) -> str:
+        """Parse the first kernel ID from list_kernels TSV output."""
+        tsv = await self.list_kernels()
+        if not tsv:
+            raise RuntimeError("list_kernels returned no output")
+        lines = tsv.strip().splitlines()
+        # First line is the header row; data starts at line index 1
+        for line in lines[1:]:
+            cols = line.split("\t")
+            if cols and cols[0].strip():
+                return cols[0].strip()
+        raise RuntimeError(f"No kernel found in list_kernels output:\n{tsv}")
+
+    # -------------------------------------------------------------------------
+    # Notebook Reading Methods
+    # -------------------------------------------------------------------------
+
+    @requires_session
+    async def read_notebook(self, notebook_path, response_format="brief", start_index=0, limit=20):
+        result = await self._session.call_tool("read_notebook", arguments={
+            "notebook_path": notebook_path,
+            "response_format": response_format,
+            "start_index": start_index,
+            "limit": limit,
+        })  # type: ignore
+        return self._extract_text_content(result)
+
+    # -------------------------------------------------------------------------
+    # Cell Tool Methods  (all require notebook_path)
+    # -------------------------------------------------------------------------
+
+    @requires_session
+    async def insert_cell(self, notebook_path, cell_index, cell_type, cell_source):
+        result = await self._call_tool_safe("insert_cell", {
+            "notebook_path": notebook_path,
+            "cell_index": cell_index,
+            "cell_type": cell_type,
+            "cell_source": cell_source,
+        })
         return self._get_structured_content_safe(result) if result else None
 
     @requires_session
-    async def delete_cell(self, cell_indices: list[int], include_source: bool = True):
-        result = await self._call_tool_safe("delete_cell", {"cell_indices": cell_indices, "include_source": include_source})
-        return self._get_structured_content_safe(result) if result else None
-
-    @requires_session
-    async def execute_cell_streaming(self, cell_index):
-        result = await self._call_tool_safe("execute_cell_streaming", {"cell_index": cell_index})
-        return self._get_structured_content_safe(result) if result else None
-    
-    @requires_session
-    async def execute_cell_with_progress(self, cell_index):
-        result = await self._call_tool_safe("execute_cell_with_progress", {"cell_index": cell_index})
+    async def insert_execute_code_cell(self, notebook_path, cell_index, cell_source, timeout=90):
+        result = await self._call_tool_safe("insert_execute_code_cell", {
+            "notebook_path": notebook_path,
+            "cell_index": cell_index,
+            "cell_source": cell_source,
+            "timeout": timeout,
+        })
         structured = self._get_structured_content_safe(result) if result else None
-        
-        # Handle JUPYTER_SERVER mode flattening list responses to single string
+
+        # Special handling: tool returns list[str | ImageContent]
+        # In JUPYTER_SERVER mode, the list gets flattened to a single string in TextContent
         if structured and "result" in structured:
             result_value = structured["result"]
             if not isinstance(result_value, list):
@@ -379,16 +405,43 @@ class MCPClient:
         return structured
 
     @requires_session
-    async def execute_cell(self, cell_index, timeout_seconds=300, stream=False, progress_interval=5):
+    async def read_cell(self, notebook_path, cell_index, include_outputs=True):
+        result = await self._call_tool_safe("read_cell", {
+            "notebook_path": notebook_path,
+            "cell_index": cell_index,
+            "include_outputs": include_outputs,
+        })
+        return self._get_structured_content_safe(result) if result else None
+
+    @requires_session
+    async def move_cell(self, notebook_path, source_index: int, target_index: int):
+        result = await self._call_tool_safe("move_cell", {
+            "notebook_path": notebook_path,
+            "source_index": source_index,
+            "target_index": target_index,
+        })
+        return self._get_structured_content_safe(result) if result else None
+
+    @requires_session
+    async def delete_cell(self, notebook_path, cell_indices: list[int], include_source: bool = True):
+        result = await self._call_tool_safe("delete_cell", {
+            "notebook_path": notebook_path,
+            "cell_indices": cell_indices,
+            "include_source": include_source,
+        })
+        return self._get_structured_content_safe(result) if result else None
+
+    @requires_session
+    async def execute_cell(self, notebook_path, cell_index, timeout_seconds=300, stream=False, progress_interval=5):
         result = await self._call_tool_safe("execute_cell", {
+            "notebook_path": notebook_path,
             "cell_index": cell_index,
             "timeout_seconds": timeout_seconds,
             "stream": stream,
-            "progress_interval": progress_interval
+            "progress_interval": progress_interval,
         })
         structured = self._get_structured_content_safe(result) if result else None
 
-        # Handle JUPYTER_SERVER mode flattening list responses to single string
         if structured and "result" in structured:
             result_value = structured["result"]
             if not isinstance(result_value, list):
@@ -396,37 +449,56 @@ class MCPClient:
         return structured
 
     @requires_session
-    async def overwrite_cell_source(self, cell_index, cell_source):
-        result = await self._call_tool_safe("overwrite_cell_source", {"cell_index": cell_index, "cell_source": cell_source})
-        return self._get_structured_content_safe(result) if result else None
-
-    @requires_session
-    async def edit_cell_source(self, cell_index, old_string, new_string, replace_all=False):
-        result = await self._call_tool_safe("edit_cell_source", {
-            "cell_index": cell_index, "old_string": old_string,
-            "new_string": new_string, "replace_all": replace_all,
+    async def overwrite_cell_source(self, notebook_path, cell_index, cell_source):
+        result = await self._call_tool_safe("overwrite_cell_source", {
+            "notebook_path": notebook_path,
+            "cell_index": cell_index,
+            "cell_source": cell_source,
         })
         return self._get_structured_content_safe(result) if result else None
 
     @requires_session
-    async def execute_code(self, code, timeout=60):
-        result = await self._session.call_tool("execute_code", arguments={"code": code, "timeout": timeout})  # type: ignore
+    async def edit_cell_source(self, notebook_path, cell_index, old_string, new_string, replace_all=False):
+        result = await self._call_tool_safe("edit_cell_source", {
+            "notebook_path": notebook_path,
+            "cell_index": cell_index,
+            "old_string": old_string,
+            "new_string": new_string,
+            "replace_all": replace_all,
+        })
+        return self._get_structured_content_safe(result) if result else None
+
+    # -------------------------------------------------------------------------
+    # Execute Code  (operates on a kernel directly, not a notebook)
+    # -------------------------------------------------------------------------
+
+    @requires_session
+    async def execute_code(self, kernel_id, code, timeout=60):
+        result = await self._session.call_tool("execute_code", arguments={
+            "kernel_id": kernel_id,
+            "code": code,
+            "timeout": timeout,
+        })  # type: ignore
         structured = self._get_structured_content_safe(result)
-        
-        # execute_code should always return a list of outputs
-        # If we got a plain string, wrap it as a list
+
         if structured and "result" in structured:
             result_val = structured["result"]
             if isinstance(result_val, str):
-                # Single output string, wrap as list
                 structured["result"] = [result_val]
             elif not isinstance(result_val, list):
-                # Some other type, wrap as list
                 structured["result"] = [result_val]
-        
+
         return structured
 
+    # -------------------------------------------------------------------------
+    # Prompts
+    # -------------------------------------------------------------------------
+
     @requires_session
-    async def jupyter_cite(self, prompt, cell_indices, notebook_name=""):
-        prompt = await self._session.get_prompt("jupyter_cite", arguments={"prompt": prompt, "cell_indices": cell_indices, "notebook_name": notebook_name})  # type: ignore
-        return [message.content.text for message in prompt.messages]
+    async def jupyter_cite(self, prompt, cell_indices, notebook_path=""):
+        result = await self._session.get_prompt("jupyter_cite", arguments={
+            "prompt": prompt,
+            "cell_indices": cell_indices,
+            "notebook_path": notebook_path,
+        })  # type: ignore
+        return [message.content.text for message in result.messages]

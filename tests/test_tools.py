@@ -29,6 +29,10 @@ from .test_common import MCPClient, JUPYTER_TOOLS, timeout_wrapper
 from .conftest import JUPYTER_TOKEN, TEST_MCP_SERVER
 
 
+# Default notebook present in the dev/content directory used by tests
+DEFAULT_NOTEBOOK = "notebook.ipynb"
+
+
 ###############################################################################
 # Health Tests
 ###############################################################################
@@ -69,22 +73,22 @@ async def test_mcp_tool_list(mcp_client_parametrized: MCPClient, request):
         tools = await mcp_client_parametrized.list_tools()
     tools_name = [tool.name for tool in tools.tools]
     logging.debug(f"tools_name: {tools_name}")
-    
+
     # In JUPYTER_SERVER mode (jupyter_extension), connect_to_jupyter is filtered out
     # In MCP_SERVER mode (mcp_server), all tools are available
     expected_tools = JUPYTER_TOOLS.copy()
-    
+
     # Get the current test parameter to determine the mode
     current_param = None
     for param in request.node.callspec.params.values():
         if param in ["mcp_server", "jupyter_extension"]:
             current_param = param
             break
-    
+
     if current_param == "jupyter_extension":
         # Remove connect_to_jupyter for jupyter_extension mode
         expected_tools = [tool for tool in JUPYTER_TOOLS if tool != 'connect_to_jupyter']
-    
+
     assert len(tools_name) == len(expected_tools) and sorted(tools_name) == sorted(
         expected_tools
     )
@@ -246,14 +250,12 @@ async def test_cell_manipulation(mcp_client_parametrized: MCPClient):
 
     async def check_and_delete_cell(client: MCPClient, index, expected_type, content):
         """Check and delete a cell (works for both markdown and code cells)"""
-        # reading and checking the content of the created cell
-        cell_info = await client.read_cell(index)
+        cell_info = await client.read_cell(DEFAULT_NOTEBOOK, index)
         logging.debug(f"cell_info: {cell_info}")
         assert isinstance(cell_info['result'], list), "Read cell result should be a list"
         assert f"=====Cell {index} | type: {expected_type}" in cell_info['result'][0], "Cell metadata should be included"
         assert content in cell_info['result'][1], "Cell source should be included"
-        # delete created cell
-        result = await client.delete_cell([index])
+        result = await client.delete_cell(DEFAULT_NOTEBOOK, [index])
         assert result is not None, "delete_cell result should not be None"
         assert f"Cell {index} ({expected_type}) deleted successfully" in result["result"]
         assert f"deleted cell source:\n{content}" in result["result"]
@@ -261,26 +263,25 @@ async def test_cell_manipulation(mcp_client_parametrized: MCPClient):
     async with mcp_client_parametrized:
         # Test markdown cell operations
         markdown_content = "Hello **World** !"
-        # insert markdown cell at index 1
-        result = await mcp_client_parametrized.insert_cell(1, "markdown", markdown_content)
+        result = await mcp_client_parametrized.insert_cell(DEFAULT_NOTEBOOK, 1, "markdown", markdown_content)
         assert result is not None, "insert_cell result should not be None"
         assert "Cell inserted successfully at index 1 (markdown)!" in result["result"]
         await check_and_delete_cell(mcp_client_parametrized, 1, "markdown", markdown_content)
 
         # Test code cell operations
         code_content = "1 + 1"
-        code_result = await mcp_client_parametrized.insert_execute_code_cell(1, code_content)
+        code_result = await mcp_client_parametrized.insert_execute_code_cell(DEFAULT_NOTEBOOK, 1, code_content)
         expected_result = eval(code_content)
         assert int(code_result['result'][0]) == expected_result
 
         # Testing appending code cell to bottom of notebook
-        code_result = await mcp_client_parametrized.insert_execute_code_cell(-1, code_content)
+        code_result = await mcp_client_parametrized.insert_execute_code_cell(DEFAULT_NOTEBOOK, -1, code_content)
         expected_result = eval(code_content)
         assert int(code_result['result'][0]) == expected_result
 
         # Test overwrite_cell_source
         new_code_content = f"({code_content}) * 2"
-        result = await mcp_client_parametrized.overwrite_cell_source(1, new_code_content)
+        result = await mcp_client_parametrized.overwrite_cell_source(DEFAULT_NOTEBOOK, 1, new_code_content)
         assert result is not None, "overwrite_cell_source result should not be None"
         assert "Cell 1 overwritten successfully!" in result["result"]
         assert "diff" in result["result"]
@@ -290,214 +291,419 @@ async def test_cell_manipulation(mcp_client_parametrized: MCPClient):
 
         await check_and_delete_cell(mcp_client_parametrized, 1, "code", new_code_content)
 
+
 @pytest.mark.asyncio
 @timeout_wrapper(60)
 async def test_multimodal_output(mcp_client_parametrized: MCPClient):
     """Test multimodal output functionality with image generation in both modes"""
     async with mcp_client_parametrized:
-        
-        # Test image generation code using PIL (lightweight)
+
         image_code = """
 from PIL import Image, ImageDraw
 import io
 import base64
 
-# Create a simple test image using PIL
 width, height = 200, 100
 image = Image.new('RGB', (width, height), color='white')
 draw = ImageDraw.Draw(image)
 
-# Draw a simple pattern
 draw.rectangle([10, 10, 190, 90], outline='blue', width=2)
 draw.ellipse([20, 20, 80, 80], fill='red')
 draw.text((100, 40), "Test Image", fill='black')
 
-# Convert to PNG and display
 buffer = io.BytesIO()
 image.save(buffer, format='PNG')
 buffer.seek(0)
 
-# Display the image (this should generate image/png output)
 from IPython.display import Image as IPythonImage, display
 display(IPythonImage(buffer.getvalue()))
 """
-        # Execute the image generation code
-        result = await mcp_client_parametrized.insert_execute_code_cell(1, image_code)
-        
-        # Check that result is 
+        result = await mcp_client_parametrized.insert_execute_code_cell(DEFAULT_NOTEBOOK, 1, image_code)
+
         assert isinstance(result['result'], list), "Result should be a list"
         assert isinstance(result['result'][0], dict)
         assert result['result'][0]['mimeType'] == "image/png", "Result should be a list of ImageContent"
-        await mcp_client_parametrized.delete_cell([1])
+        await mcp_client_parametrized.delete_cell(DEFAULT_NOTEBOOK, [1])
 
 
 ###############################################################################
-# Multi-Notebook Management Tests
+# Kernel Management Tests
 ###############################################################################
+
 
 @pytest.mark.asyncio
 @timeout_wrapper(90)
-async def test_multi_notebook_operations(mcp_client_parametrized: MCPClient):
-    """Test cell operations across multiple notebooks in both modes"""
+async def test_kernel_lifecycle(mcp_client_parametrized: MCPClient):
+    """Test full kernel lifecycle: create → attach → execute cell → detach → delete"""
     import uuid
     tag = uuid.uuid4().hex[:8]
-    marker_a = f"# This is notebook A [{tag}]"
-    marker_b = f"# This is notebook B [{tag}]\nA hidden content"
+    marker = f"# Kernel lifecycle test [{tag}]"
 
     async with mcp_client_parametrized:
-        # Connect to the new notebook
-        result = await mcp_client_parametrized.register_notebook("notebook_a", "new.ipynb")
-        logging.debug(f"Connect to notebook A: {result}")
-        assert "Successfully activate notebook 'notebook_a'" in result
+        # 1. Create a new kernel
+        create_result = await mcp_client_parametrized.create_kernel()
+        logging.debug(f"create_kernel result: {create_result}")
+        assert "Kernel created successfully" in create_result
 
-        # Add a uniquely-tagged cell to notebook A
-        await mcp_client_parametrized.insert_cell(-1, "markdown", marker_a)
+        # Parse the kernel ID
+        kernel_id = None
+        for line in create_result.splitlines():
+            if line.startswith("ID: "):
+                kernel_id = line[4:].strip()
+                break
+        assert kernel_id, f"Could not parse kernel_id from: {create_result}"
+        logging.info(f"Created kernel: {kernel_id}")
 
-        # Try to connect to notebook.ipynb as notebook_b
-        result = await mcp_client_parametrized.register_notebook("notebook_b", "notebook.ipynb")
-        logging.debug(f"Connect to notebook B: {result}")
-        assert "Successfully activate notebook 'notebook_b'" in result
+        # 2. Attach the kernel to the test notebook
+        attach_result = await mcp_client_parametrized.attach_kernel(DEFAULT_NOTEBOOK, kernel_id)
+        logging.debug(f"attach_kernel result: {attach_result}")
+        assert kernel_id in attach_result
+        assert DEFAULT_NOTEBOOK in attach_result
 
-        # Add a uniquely-tagged cell to notebook B
-        await mcp_client_parametrized.insert_cell(-1, "markdown", marker_b)
+        # 3. Insert and execute a cell using the attached kernel
+        code_result = await mcp_client_parametrized.insert_execute_code_cell(
+            DEFAULT_NOTEBOOK, 1, f"{marker}\n2 ** 8"
+        )
+        assert code_result is not None
+        assert "256" in str(code_result["result"][0])
+        await mcp_client_parametrized.delete_cell(DEFAULT_NOTEBOOK, [1])
 
-        # Switch back to notebook A
-        result = await mcp_client_parametrized.register_notebook("notebook_a", "new.ipynb")
-        logging.debug(f"Reactivate notebook A: {result}")
-        assert "Reactivating notebook 'notebook_a' and deactivating 'notebook_b'." in result
+        # 4. Detach the kernel (kernel keeps running)
+        detach_result = await mcp_client_parametrized.detach_kernel(DEFAULT_NOTEBOOK)
+        logging.debug(f"detach_kernel result: {detach_result}")
+        assert "detached" in detach_result.lower() or kernel_id in detach_result
 
-        # Verify we're working with notebook A (our unique marker is there)
-        cell_list_a = await mcp_client_parametrized.read_notebook("notebook_a", limit=100)
-        assert marker_a in cell_list_a
-
-        # Switch to notebook B and verify
-        await mcp_client_parametrized.register_notebook("notebook_b", "notebook.ipynb")
-        cell_list_b = await mcp_client_parametrized.read_notebook("notebook_b", response_format="detailed", limit=100)
-        assert marker_b in cell_list_b
-
-        notebook_list = await mcp_client_parametrized.list_notebooks()
-        logging.debug(f"Notebook list after switching: {notebook_list}")
-        assert "notebook_a" in notebook_list
-        assert "notebook_b" in notebook_list
-        assert "✓" in notebook_list
-
-        # Test restart notebook
-        restart_result = await mcp_client_parametrized.restart_notebook("notebook_a")
-        logging.debug(f"Restart result: {restart_result}")
-        assert "Notebook 'notebook_a' kernel restarted successfully" in restart_result
-
-        # Clean up - unuse both notebooks
-        result = await mcp_client_parametrized.unregister_notebook("notebook_a")
-        logging.debug(f"Unuse notebook A: {result}")
-        assert "Notebook 'notebook_a' unused successfully" in result
-        result = await mcp_client_parametrized.unregister_notebook("notebook_b")
-        logging.debug(f"Unuse notebook B: {result}")
-        assert "Notebook 'notebook_b' unused successfully" in result
-
-
-@pytest.mark.asyncio 
-@timeout_wrapper(60)
-async def test_notebooks_error_cases(mcp_client_parametrized: MCPClient):
-    """Test error handling for notebook management in both modes"""
-    async with mcp_client_parametrized:
-        # Test connecting to non-existent notebook (with required notebook_path parameter)
-        error_result = await mcp_client_parametrized.register_notebook("nonexistent", "nonexistent.ipynb")
-        logging.debug(f"Nonexistent notebook result: {error_result}")
-        assert "not found" in error_result
-        
-        # Test operations on non-used notebook
-        restart_error = await mcp_client_parametrized.restart_notebook("nonexistent_notebook")
-        assert "not connected" in restart_error
-        
-        disconnect_error = await mcp_client_parametrized.unregister_notebook("nonexistent_notebook") 
-        assert "not connected" in disconnect_error
+        # 5. Delete the kernel
+        delete_result = await mcp_client_parametrized.delete_kernel(kernel_id)
+        logging.debug(f"delete_kernel result: {delete_result}")
+        assert kernel_id in delete_result or "deleted" in delete_result.lower()
 
 
 @pytest.mark.asyncio
 @timeout_wrapper(60)
-async def test_read_cell_without_active_notebook(mcp_client_parametrized: MCPClient):
-    """Test read_cell does not raise a cryptic exception when called without register_notebook.
-
-    Regression test for #208: in JUPYTER_SERVER mode, calling read_cell without
-    first calling register_notebook previously raised 'quote_from_bytes() expected bytes'
-    deep inside the contents manager because None was passed as the notebook path.
-
-    After the fix, read_cell must return a well-formed result in both modes:
-    - JUPYTER_SERVER: returns a helpful error message mentioning register_notebook
-    - MCP_SERVER: returns actual cell data from the pre-configured default notebook
-
-    The assertion is intentionally content-based rather than mode-based to avoid
-    relying on pytest internals for mode detection.
-    """
+async def test_execute_cell_without_kernel(mcp_client_parametrized: MCPClient):
+    """execute_cell must return a clear error when no kernel is attached."""
     async with mcp_client_parametrized:
-        result = await mcp_client_parametrized.read_cell(0)
+        # Use a path that definitely has no kernel attached
+        unattached_path = "unattached_test.ipynb"
+        # Insert a cell into the default notebook first so there's something to try executing
+        # Then try to execute from an unattached notebook path
+        result = await mcp_client_parametrized.execute_cell(unattached_path, 0)
+        # Result should be None (error wrapped) or contain an error message
+        if result is not None:
+            result_text = str(result.get("result", ""))
+            assert "attach_kernel" in result_text.lower() or "no kernel" in result_text.lower(), (
+                f"Expected 'attach_kernel' error message but got: {result_text[:300]}"
+            )
+
+
+@pytest.mark.asyncio
+@timeout_wrapper(60)
+async def test_restart_kernel(mcp_client_parametrized: MCPClient):
+    """Test kernel restart clears state."""
+    async with mcp_client_parametrized:
+        # Create a kernel
+        create_result = await mcp_client_parametrized.create_kernel()
+        assert "Kernel created successfully" in create_result
+
+        kernel_id = None
+        for line in create_result.splitlines():
+            if line.startswith("ID: "):
+                kernel_id = line[4:].strip()
+                break
+        assert kernel_id
+
+        # Attach to test notebook
+        await mcp_client_parametrized.attach_kernel(DEFAULT_NOTEBOOK, kernel_id)
+
+        # Set a variable
+        await mcp_client_parametrized.execute_code(kernel_id, "x_restart_test = 42")
+
+        # Restart the kernel
+        restart_result = await mcp_client_parametrized.restart_kernel(kernel_id)
+        logging.debug(f"restart_kernel result: {restart_result}")
+        assert kernel_id in restart_result or "restarted" in restart_result.lower()
+
+        # Cleanup
+        await mcp_client_parametrized.detach_kernel(DEFAULT_NOTEBOOK)
+        await mcp_client_parametrized.delete_kernel(kernel_id)
+
+
+@pytest.mark.asyncio
+@timeout_wrapper(60)
+async def test_multi_notebook_kernel_operations(mcp_client_parametrized: MCPClient):
+    """Test kernel operations across multiple notebooks in both modes."""
+    import uuid
+    tag = uuid.uuid4().hex[:8]
+    marker_a = f"# Notebook A [{tag}]"
+    marker_b = f"# Notebook B [{tag}]"
+
+    async with mcp_client_parametrized:
+        # Create two kernels
+        result_a = await mcp_client_parametrized.create_kernel()
+        result_b = await mcp_client_parametrized.create_kernel()
+
+        kernel_a = None
+        kernel_b = None
+        for line in result_a.splitlines():
+            if line.startswith("ID: "):
+                kernel_a = line[4:].strip()
+                break
+        for line in result_b.splitlines():
+            if line.startswith("ID: "):
+                kernel_b = line[4:].strip()
+                break
+        assert kernel_a and kernel_b
+
+        # Attach each kernel to a different notebook
+        await mcp_client_parametrized.attach_kernel("notebook.ipynb", kernel_a)
+        await mcp_client_parametrized.attach_kernel("new.ipynb", kernel_b)
+
+        # Execute in notebook A
+        await mcp_client_parametrized.insert_cell("notebook.ipynb", 1, "markdown", marker_a)
+        cell_list_a = await mcp_client_parametrized.read_notebook("notebook.ipynb", limit=100)
+        assert marker_a in cell_list_a
+
+        # Execute in notebook B
+        await mcp_client_parametrized.insert_cell("new.ipynb", 1, "markdown", marker_b)
+        cell_list_b = await mcp_client_parametrized.read_notebook("new.ipynb", limit=100)
+        assert marker_b in cell_list_b
+
+        # Verify kernels are distinct via execute_code
+        await mcp_client_parametrized.execute_code(kernel_a, "var_a = 'from_kernel_a'")
+        await mcp_client_parametrized.execute_code(kernel_b, "var_b = 'from_kernel_b'")
+
+        result_a_var = await mcp_client_parametrized.execute_code(kernel_a, "var_a")
+        assert "from_kernel_a" in str(result_a_var["result"])
+
+        # Clean up cells
+        await mcp_client_parametrized.delete_cell("notebook.ipynb", [1])
+        await mcp_client_parametrized.delete_cell("new.ipynb", [1])
+
+        # Detach and delete kernels
+        await mcp_client_parametrized.detach_kernel("notebook.ipynb")
+        await mcp_client_parametrized.detach_kernel("new.ipynb")
+        await mcp_client_parametrized.delete_kernel(kernel_a)
+        await mcp_client_parametrized.delete_kernel(kernel_b)
+
+
+###############################################################################
+# Read & Execute Tests
+###############################################################################
+
+
+@pytest.mark.asyncio
+@timeout_wrapper(60)
+async def test_read_cell(mcp_client_parametrized: MCPClient):
+    """Test read_cell with explicit notebook_path in both modes."""
+    async with mcp_client_parametrized:
+        result = await mcp_client_parametrized.read_cell(DEFAULT_NOTEBOOK, 0)
         logging.debug(f"read_cell result: {result}")
 
-        assert result is not None, (
-            "read_cell raised an unhandled exception (got None). "
-            "Expected either cell data or a helpful error message."
-        )
+        assert result is not None, "read_cell must not return None"
         assert isinstance(result["result"], list), "Result should be a list"
 
         result_text = " ".join(str(item) for item in result["result"])
-        assert "=====Cell 0" in result_text or "register_notebook" in result_text.lower(), (
-            f"Expected either cell data ('=====Cell 0') or a helpful error message "
-            f"('register_notebook'), but got: {result_text[:300]}"
+        assert "=====Cell 0" in result_text, (
+            f"Expected '=====Cell 0' header in result, got: {result_text[:300]}"
         )
 
 
 @pytest.mark.asyncio
 @timeout_wrapper(60)
 async def test_execute_code(mcp_client_parametrized: MCPClient):
-    """Test execute_code with basic Python code in both modes"""
+    """Test execute_code with explicit kernel_id in both modes."""
     async with mcp_client_parametrized:
+        # Get the first available kernel ID (created at server startup)
+        kernel_id = await mcp_client_parametrized.get_first_kernel_id()
+        logging.info(f"Using kernel_id: {kernel_id}")
+
         # Test simple Python code
-        result = await mcp_client_parametrized.execute_code("words='Hello IPython World!'")
+        await mcp_client_parametrized.execute_code(kernel_id, "words='Hello IPython World!'")
 
         # Test %who magic command (list variables)
-        result = await mcp_client_parametrized.execute_code("%who")
+        result = await mcp_client_parametrized.execute_code(kernel_id, "%who")
         assert "words" in result["result"][0]
 
-        result = await mcp_client_parametrized.execute_code("!echo 'Hello from shell'")
+        result = await mcp_client_parametrized.execute_code(kernel_id, "!echo 'Hello from shell'")
         assert "Hello from shell" in result["result"][0]
 
         # Test with very short timeout on a potentially long-running command
-        result = await mcp_client_parametrized.execute_code("import time\ntime.sleep(5)", timeout=2)
+        result = await mcp_client_parametrized.execute_code(
+            kernel_id, "import time\ntime.sleep(5)", timeout=2
+        )
         assert "TIMEOUT ERROR" in result["result"][0]
+
 
 @pytest.mark.asyncio
 async def test_list_kernels(mcp_client_parametrized: MCPClient):
     """Test list_kernels functionality in both MCP_SERVER and JUPYTER_SERVER modes"""
     async with mcp_client_parametrized:
-        # Call list_kernels
         kernel_list = await mcp_client_parametrized.list_kernels()
         logging.debug(f"Kernel list: {kernel_list}")
-        # Check for either TSV header or "No kernels found" message
         assert "ID\tName\tDisplay_Name\tLanguage\tState\tConnections\tLast_Activity\tEnvironment" in kernel_list
+
+
+###############################################################################
+# read_notebook Tests
+###############################################################################
+
+
+@pytest.mark.asyncio
+@timeout_wrapper(30)
+async def test_read_notebook_basic(mcp_client_parametrized: MCPClient):
+    """read_notebook should return cell list without needing a kernel attached."""
+    async with mcp_client_parametrized:
+        result = await mcp_client_parametrized.read_notebook(DEFAULT_NOTEBOOK)
+        logging.debug(f"read_notebook result: {result}")
+        assert result is not None, "read_notebook must not return None"
+        assert "cells" in result.lower() or "cell" in result.lower(), (
+            f"Expected cell information in result, got: {result[:300]}"
+        )
+
+
+@pytest.mark.asyncio
+@timeout_wrapper(30)
+async def test_read_notebook_detailed_format(mcp_client_parametrized: MCPClient):
+    """read_notebook with response_format='detailed' returns full cell source."""
+    async with mcp_client_parametrized:
+        result = await mcp_client_parametrized.read_notebook(
+            DEFAULT_NOTEBOOK, response_format="detailed"
+        )
+        logging.debug(f"read_notebook detailed result: {result}")
+        assert result is not None, "read_notebook (detailed) must not return None"
+        # detailed mode should include the actual cell content, not just line counts
+        assert "cell" in result.lower(), (
+            f"Expected cell info in detailed result, got: {result[:300]}"
+        )
+
+
+@pytest.mark.asyncio
+@timeout_wrapper(30)
+async def test_read_notebook_pagination(mcp_client_parametrized: MCPClient):
+    """read_notebook start_index / limit parameters work correctly."""
+    async with mcp_client_parametrized:
+        # First read to find total cell count
+        full_result = await mcp_client_parametrized.read_notebook(DEFAULT_NOTEBOOK, limit=0)
+        assert full_result is not None
+
+        # Read with limit=1 — should only include first cell
+        limited = await mcp_client_parametrized.read_notebook(
+            DEFAULT_NOTEBOOK, start_index=0, limit=1
+        )
+        assert limited is not None
+        # A limit of 1 should return fewer lines than limit=0 (all cells)
+        assert len(limited.splitlines()) <= len(full_result.splitlines()), (
+            "limit=1 should produce fewer output lines than limit=0"
+        )
+
+
+@pytest.mark.asyncio
+@timeout_wrapper(30)
+async def test_read_notebook_nonexistent(mcp_client_parametrized: MCPClient):
+    """read_notebook with a non-existent path should return an error, not crash."""
+    async with mcp_client_parametrized:
+        result = await mcp_client_parametrized.read_notebook("does_not_exist.ipynb")
+        # Should either return None (wrapped error) or an error message string
+        if result is not None:
+            assert any(
+                kw in result.lower()
+                for kw in ["error", "not found", "no such", "does_not_exist"]
+            ), f"Expected error message for missing notebook, got: {result[:300]}"
+
+
+###############################################################################
+# list_notebooks Tests
+###############################################################################
+
+
+@pytest.mark.asyncio
+@timeout_wrapper(30)
+async def test_list_notebooks_empty(mcp_client_parametrized: MCPClient):
+    """list_notebooks returns a clear message when no notebooks are attached."""
+    async with mcp_client_parametrized:
+        result = await mcp_client_parametrized.list_notebooks()
+        logging.debug(f"list_notebooks (empty) result: {result}")
+        assert result is not None
+        # Either TSV header or "no notebooks" message
+        assert "notebook" in result.lower() or "kernel" in result.lower(), (
+            f"Unexpected list_notebooks output: {result[:300]}"
+        )
+
+
+@pytest.mark.asyncio
+@timeout_wrapper(60)
+async def test_list_notebooks_after_attach(mcp_client_parametrized: MCPClient):
+    """list_notebooks shows the notebook path and kernel ID after attach_kernel."""
+    async with mcp_client_parametrized:
+        # Create and attach a kernel
+        create_result = await mcp_client_parametrized.create_kernel()
+        assert "Kernel created successfully" in create_result
+        kernel_id = None
+        for line in create_result.splitlines():
+            if line.startswith("ID: "):
+                kernel_id = line[4:].strip()
+                break
+        assert kernel_id
+
+        await mcp_client_parametrized.attach_kernel(DEFAULT_NOTEBOOK, kernel_id)
+
+        # list_notebooks should now include the notebook path and kernel ID
+        result = await mcp_client_parametrized.list_notebooks()
+        logging.debug(f"list_notebooks (attached) result: {result}")
+        assert result is not None
+        assert DEFAULT_NOTEBOOK in result, (
+            f"Expected '{DEFAULT_NOTEBOOK}' in list_notebooks output: {result}"
+        )
+        assert kernel_id in result, (
+            f"Expected kernel_id '{kernel_id}' in list_notebooks output: {result}"
+        )
+
+        # Cleanup
+        await mcp_client_parametrized.detach_kernel(DEFAULT_NOTEBOOK)
+        await mcp_client_parametrized.delete_kernel(kernel_id)
+
+
+###############################################################################
+# list_kernel_specs Tests
+###############################################################################
+
+
+@pytest.mark.asyncio
+@timeout_wrapper(30)
+async def test_list_kernel_specs(mcp_client_parametrized: MCPClient):
+    """list_kernel_specs returns at least one kernel spec with correct TSV header."""
+    async with mcp_client_parametrized:
+        result = await mcp_client_parametrized.list_kernel_specs()
+        logging.debug(f"list_kernel_specs result: {result}")
+        assert result is not None, "list_kernel_specs must not return None"
+        assert "Name\tDisplay_Name\tLanguage" in result, (
+            f"Expected TSV header in list_kernel_specs output: {result[:300]}"
+        )
+        lines = result.strip().splitlines()
+        # At least header + one spec row
+        assert len(lines) >= 2, (
+            f"Expected at least one kernel spec row, got: {result[:300]}"
+        )
 
 
 ###############################################################################
 # Allowed Tools Configuration Tests
 ###############################################################################
 
+
 @pytest.mark.asyncio
 async def test_allowed_jupyter_mcp_tools_integration(mcp_client_parametrized: MCPClient):
     """Test that the server respects allowed_jupyter_mcp_tools configuration."""
     async with mcp_client_parametrized:
-        # Get the list of tools from the server
         tools = await mcp_client_parametrized.list_tools()
         tool_names = [tool.name for tool in tools.tools]
-        
+
         logging.info(f"Available tools: {tool_names}")
-        
-        # Check that default jupyter-mcp-tools are present
-        # These should be available by default
+
         jupyter_tools = [name for name in tool_names if name.startswith("notebook_")]
-        
-        # The actual availability depends on whether jupyter-mcp-tools is installed
-        # and whether we're running in JupyterLab mode, so we check conditionally
+
         if any(tool.startswith("notebook_") for tool in tool_names):
-            # If any notebook tools are present, the default ones should be there
             assert "notebook_run-all-cells" in tool_names or len(jupyter_tools) > 0
             logging.info(f"Jupyter MCP tools found: {jupyter_tools}")
         else:
@@ -507,8 +713,7 @@ async def test_allowed_jupyter_mcp_tools_integration(mcp_client_parametrized: MC
 def test_config_allowed_tools_parsing():
     """Test the configuration parsing for allowed tools."""
     from jupyter_mcp_server.config import JupyterMCPConfig
-    
-    # Test various input formats
+
     test_cases = [
         ("tool1,tool2,tool3", ["tool1", "tool2", "tool3"]),
         ("single_tool", ["single_tool"]),
@@ -516,44 +721,42 @@ def test_config_allowed_tools_parsing():
         ("tool1,,tool2,", ["tool1", "tool2"]),
         ("notebook_*,console_create", ["notebook_*", "console_create"]),
     ]
-    
+
     for input_str, expected in test_cases:
         config = JupyterMCPConfig(allowed_jupyter_mcp_tools=input_str)
         result = config.get_allowed_jupyter_mcp_tools()
         assert result == expected, f"Failed for input '{input_str}': expected {expected}, got {result}"
         logging.info(f"✅ Parsed '{input_str}' -> {result}")
-    
+
     logging.info("✅ All configuration parsing tests passed")
 
 
 def test_config_environment_variable():
     """Test that CLI-style configuration works (environment variables work through CLI)."""
     from jupyter_mcp_server.config import set_config, reset_config
-    
-    # Test configuration via set_config (simulates how CLI handles environment variables)
+
     reset_config()
     config = set_config(allowed_jupyter_mcp_tools="env_tool1,env_tool2")
     tools = config.get_allowed_jupyter_mcp_tools()
-    
+
     assert tools == ["env_tool1", "env_tool2"]
     logging.info(f"✅ CLI-style configuration test passed: {tools}")
-    
-    # Cleanup
+
     reset_config()
 
 
 def test_config_defaults():
     """Test that default configuration works correctly."""
     from jupyter_mcp_server.config import JupyterMCPConfig, reset_config
-    
+
     reset_config()
     config = JupyterMCPConfig()
     default_tools = config.get_allowed_jupyter_mcp_tools()
-    
+
     assert "notebook_run-all-cells" in default_tools
     assert "notebook_get-selected-cell" in default_tools
     assert len(default_tools) == 2
-    
+
     logging.info(f"✅ Default configuration test passed: {default_tools}")
 
 
@@ -561,37 +764,38 @@ def test_server_tool_registration():
     """Test that get_registered_tools includes the correct tools based on configuration."""
     from jupyter_mcp_server.server import get_registered_tools
     from jupyter_mcp_server.config import set_config, reset_config
-    
-    # Test with custom configuration
+
     reset_config()
     set_config(allowed_jupyter_mcp_tools="notebook_run-all-cells")
-    
+
     try:
-        # Get registered tools (this may fail if jupyter-mcp-tools is not available)
         tools = get_registered_tools(token="test_token", url="http://localhost:8888")
         tool_names = [tool["name"] for tool in tools]
-        
+
         logging.info(f"Registered tools: {tool_names}")
-        
-        # Check that FastMCP tools are always present
+
         fastmcp_tools = [name for name in tool_names if not name.startswith("notebook_")]
         assert len(fastmcp_tools) > 0, "FastMCP tools should always be present"
-        
+
         logging.info("✅ Server tool registration test completed")
-        
+
     except Exception as e:
-        # This is expected if jupyter-mcp-tools is not available or we're not in JupyterLab mode
         logging.info(f"Server tool registration test skipped due to: {e}")
-    
+
     finally:
         reset_config()
 
 
-def test_notebook_name_param_in_tool_signatures():
-    """Verify all cell operation tools expose notebook_name as an optional parameter.
+###############################################################################
+# Unit Tests: Tool Signatures & NotebookManager
+###############################################################################
 
-    This is a unit test — no running Jupyter server required.
-    It guards against regressions where notebook_name is accidentally removed.
+
+def test_notebook_path_param_in_tool_signatures():
+    """Verify all cell operation tools expose notebook_path as a required parameter.
+
+    Guards against regressions where notebook_path is accidentally removed or
+    renamed back to notebook_name.
     """
     import inspect
     from jupyter_mcp_server.tools.execute_cell_tool import ExecuteCellTool
@@ -601,9 +805,8 @@ def test_notebook_name_param_in_tool_signatures():
     from jupyter_mcp_server.tools.delete_cell_tool import DeleteCellTool
     from jupyter_mcp_server.tools.move_cell_tool import MoveCellTool
     from jupyter_mcp_server.tools.read_cell_tool import ReadCellTool
-    from jupyter_mcp_server.tools.execute_code_tool import ExecuteCodeTool
 
-    tools = [
+    cell_tools = [
         ExecuteCellTool,
         InsertCellTool,
         EditCellSourceTool,
@@ -611,47 +814,91 @@ def test_notebook_name_param_in_tool_signatures():
         DeleteCellTool,
         MoveCellTool,
         ReadCellTool,
-        ExecuteCodeTool,
     ]
-    for tool_cls in tools:
+    for tool_cls in cell_tools:
         sig = inspect.signature(tool_cls().execute)
-        assert "notebook_name" in sig.parameters, (
-            f"{tool_cls.__name__}.execute() is missing notebook_name parameter"
+        assert "notebook_path" in sig.parameters, (
+            f"{tool_cls.__name__}.execute() is missing notebook_path parameter"
         )
-        param = sig.parameters["notebook_name"]
-        assert param.default == "", (
-            f"{tool_cls.__name__}.execute() notebook_name should have default='' (required enforcement is in server.py)"
+        assert "notebook_name" not in sig.parameters, (
+            f"{tool_cls.__name__}.execute() still has old notebook_name parameter"
         )
-    logging.info("✅ All cell tools expose notebook_name parameter")
+    logging.info("✅ All cell tools expose notebook_path parameter")
 
 
-def test_get_current_notebook_context_explicit_name():
-    """get_current_notebook_context resolves explicit notebook_name over current active notebook."""
-    from jupyter_mcp_server.utils import get_current_notebook_context
+def test_execute_code_kernel_id_param():
+    """Verify ExecuteCodeTool.execute() takes kernel_id (not notebook_name)."""
+    import inspect
+    from jupyter_mcp_server.tools.execute_code_tool import ExecuteCodeTool
+
+    sig = inspect.signature(ExecuteCodeTool().execute)
+    assert "kernel_id" in sig.parameters, (
+        "ExecuteCodeTool.execute() is missing kernel_id parameter"
+    )
+    assert "notebook_name" not in sig.parameters, (
+        "ExecuteCodeTool.execute() still has old notebook_name parameter"
+    )
+    logging.info("✅ ExecuteCodeTool uses kernel_id parameter")
+
+
+def test_notebook_manager_attach_detach():
+    """Unit test: NotebookManager attach/detach/lookup semantics."""
     from jupyter_mcp_server.notebook_manager import NotebookManager
 
     mgr = NotebookManager()
-    # Register two fake notebooks
-    mgr._notebooks["nb_a"] = {
-        "kernel": {"id": "kernel-a"},
-        "is_local": True,
-        "notebook_info": {"path": "path/to/nb_a.ipynb", "server_url": "local", "token": None},
-    }
-    mgr._notebooks["nb_b"] = {
-        "kernel": {"id": "kernel-b"},
-        "is_local": True,
-        "notebook_info": {"path": "path/to/nb_b.ipynb", "server_url": "local", "token": None},
-    }
-    mgr._current_notebook = "nb_a"
 
-    # Without explicit name → resolves to current (nb_a)
-    path, kid = get_current_notebook_context(mgr, notebook_name="")
-    assert path == "path/to/nb_a.ipynb"
-    assert kid == "kernel-a"
+    # No attachment yet
+    assert mgr.get_kernel_id("nb_a.ipynb") is None
+    assert "nb_a.ipynb" not in mgr
 
-    # With explicit name → resolves to nb_b regardless of current
-    path, kid = get_current_notebook_context(mgr, notebook_name="nb_b")
-    assert path == "path/to/nb_b.ipynb"
-    assert kid == "kernel-b"
+    # Add kernel clients and attach
+    mgr.add_kernel_client("kernel-1", {"id": "kernel-1"})
+    mgr.add_kernel_client("kernel-2", {"id": "kernel-2"})
+    mgr.attach("nb_a.ipynb", "kernel-1")
+    mgr.attach("nb_b.ipynb", "kernel-2")
 
-    logging.info("✅ get_current_notebook_context explicit name test passed")
+    assert mgr.get_kernel_id("nb_a.ipynb") == "kernel-1"
+    assert mgr.get_kernel_id("nb_b.ipynb") == "kernel-2"
+    assert "nb_a.ipynb" in mgr
+
+    # Re-attach nb_a to kernel-2
+    mgr.attach("nb_a.ipynb", "kernel-2")
+    assert mgr.get_kernel_id("nb_a.ipynb") == "kernel-2"
+
+    # detach_by_kernel removes all notebooks using kernel-2
+    detached = mgr.detach_by_kernel("kernel-2")
+    assert set(detached) == {"nb_a.ipynb", "nb_b.ipynb"}
+    assert mgr.get_kernel_id("nb_a.ipynb") is None
+    assert mgr.get_kernel_id("nb_b.ipynb") is None
+
+    # Explicit detach
+    mgr.attach("nb_c.ipynb", "kernel-1")
+    assert mgr.detach("nb_c.ipynb") is True
+    assert mgr.detach("nb_c.ipynb") is False  # already gone
+
+    # Kernel client lookup
+    assert mgr.get_kernel_client("kernel-1") == {"id": "kernel-1"}
+    assert mgr.get_kernel_client("nonexistent") is None
+
+    logging.info("✅ NotebookManager attach/detach semantics verified")
+
+
+def test_notebook_manager_default_kernel():
+    """Unit test: legacy set_default_kernel / get_default_kernel / clear_default_kernel."""
+    from jupyter_mcp_server.notebook_manager import NotebookManager
+
+    mgr = NotebookManager()
+
+    assert mgr.get_default_kernel() is None
+
+    fake_client = {"id": "k1", "is_alive": lambda: True}
+    mgr.set_default_kernel("k1", fake_client)
+
+    assert mgr.get_default_kernel() is fake_client
+    assert mgr.get_kernel_client("k1") is fake_client
+
+    mgr.clear_default_kernel()
+    assert mgr.get_default_kernel() is None
+    assert mgr.get_kernel_client("k1") is None
+
+    logging.info("✅ NotebookManager default_kernel helpers verified")

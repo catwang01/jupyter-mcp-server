@@ -118,30 +118,32 @@ class JupyterCitePrompt(BaseTool):
         prompt: Optional[str] = None,
         **kwargs
     ) -> str:
-        """Execute the read_notebook tool.
-        
+        """Execute the jupyter_cite_prompt tool.
+
         Args:
             mode: Server mode (MCP_SERVER or JUPYTER_SERVER)
             contents_manager: Direct API access for JUPYTER_SERVER mode
             notebook_manager: Notebook manager instance
-            notebook_name: Notebook identifier to read
-            response_format: Response format (brief or detailed)
-            start_index: Starting index for pagination (0-based)
-            limit: Maximum number of items to return (0 means no limit)
+            cell_indices: Comma-separated list of cell indices to cite
+            notebook_name: Notebook path to read cells from
+            prompt: Optional prompt to include with the citation
             **kwargs: Additional parameters
-            
+
         Returns:
-            Formatted table with cell information
+            Formatted citation output
         """
         if notebook_name == "":
-            notebook_name = notebook_manager._current_notebook
+            # In new architecture there is no "current notebook"; pick the first attached one
+            attachments = notebook_manager.list_attachments()
+            notebook_name = next(iter(attachments), "")
         if notebook_name not in notebook_manager:
-            raise ValueError(f"Notebook '{notebook_name}' is not connected. All currently connected notebooks: {list(notebook_manager.list_all_notebooks().keys())}")
+            raise ValueError(f"Notebook '{notebook_name}' is not attached to any kernel. Currently attached notebooks: {list(notebook_manager.list_attachments().keys())}")
         
         if mode == ServerMode.JUPYTER_SERVER and contents_manager is not None:
             # Local mode: read notebook directly from file system
-            notebook_path = notebook_manager.get_notebook_path(notebook_name)
-            
+            # In new architecture, notebook_name IS the notebook_path
+            notebook_path = notebook_name
+
             model = await contents_manager.get(notebook_path, content=True, type='notebook')
             if 'content' not in model:
                 raise ValueError(f"Could not read notebook content from {notebook_path}")
