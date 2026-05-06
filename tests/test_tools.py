@@ -620,9 +620,9 @@ def test_notebook_name_param_in_tool_signatures():
         )
         param = sig.parameters["notebook_name"]
         assert param.default == "", (
-            f"{tool_cls.__name__}.execute() notebook_name default should be '' not {param.default!r}"
+            f"{tool_cls.__name__}.execute() notebook_name should have default='' (required enforcement is in server.py)"
         )
-    logging.info("✅ All cell tools expose notebook_name with default=''")
+    logging.info("✅ All cell tools expose notebook_name parameter")
 
 
 def test_get_current_notebook_context_explicit_name():

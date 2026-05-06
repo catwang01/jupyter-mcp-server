@@ -45,8 +45,8 @@ __all__ = [
     # Notebook Management
     "ListNotebooksTool",
     "RestartNotebookTool",
-    "UnuseNotebookTool",
-    "UseNotebookTool",
+    "UnregisterNotebookTool",
+    "RegisterNotebookTool",
     # Cell Reading
     "ReadNotebookTool",
     "ReadCellTool",
