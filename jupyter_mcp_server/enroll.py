@@ -8,7 +8,6 @@ import logging
 from typing import Any
 
 from jupyter_mcp_server.notebook_manager import NotebookManager
-from jupyter_mcp_server.tools.register_notebook_tool import RegisterNotebookTool
 
 logger = logging.getLogger(__name__)
 
@@ -16,79 +15,85 @@ logger = logging.getLogger(__name__)
 async def auto_enroll_document(
     config: Any,
     notebook_manager: NotebookManager,
-    use_notebook_tool: RegisterNotebookTool,
+    use_notebook_tool: Any,  # kept for backward compat, ignored
     server_context: Any,
 ) -> None:
     """Automatically enroll the configured document_id as a managed notebook.
-    
-    Handles kernel creation/connection based on configuration:
-    - If runtime_id is provided: Connect to that specific kernel
-    - If start_new_runtime is True: Create a new kernel
-    - If both are False/None: Enroll notebook WITHOUT kernel (notebook-only mode)
-    
+
+    Creates a kernel (if start_new_runtime is True) or attaches an existing one
+    (if runtime_id is provided), then associates it with config.document_id.
+
     Args:
         config: JupyterMCPConfig instance with configuration parameters
-        notebook_manager: NotebookManager instance for managing notebooks
-        use_notebook_tool: RegisterNotebookTool instance for enrolling notebooks
+        notebook_manager: NotebookManager instance
+        use_notebook_tool: Unused (kept for backward compat)
         server_context: ServerContext instance with server state
     """
-    # Check if document_id is configured and not already managed
     if not config.document_id:
         logger.debug("No document_id configured, skipping auto-enrollment")
         return
-        
-    if "default" in notebook_manager:
-        logger.debug("Default notebook already enrolled, skipping auto-enrollment")
-        return
-    
-    # Check if we should skip kernel creation entirely
+
     if not config.runtime_id and not config.start_new_runtime:
-        # Enroll notebook without kernel - just register the notebook path
-        try:
-            logger.info(f"Auto-enrolling document '{config.document_id}' without kernel (notebook-only mode)")
-            # Add notebook to manager without kernel
-            notebook_manager.add_notebook(
-                "default",
-                None,  # No kernel
-                server_url=config.document_url,
-                token=config.document_token,
-                path=config.document_id
-            )
-            notebook_manager.set_current_notebook("default")
-            logger.info(f"Auto-enrollment result: Successfully enrolled notebook 'default' at path '{config.document_id}' without kernel.")
-            return
-        except Exception as e:
-            logger.warning(f"Failed to auto-enroll document without kernel: {e}")
-            return
-    
-    # Otherwise, enroll with kernel
-    try:
-        # Determine kernel_id based on configuration
-        kernel_id_to_use = None
-        if config.runtime_id:
-            # User explicitly provided a kernel ID to connect to
-            kernel_id_to_use = config.runtime_id
-            logger.info(f"Auto-enrolling document '{config.document_id}' with existing kernel '{kernel_id_to_use}'")
-        elif config.start_new_runtime:
-            # User wants a new kernel created
-            kernel_id_to_use = None  # Will trigger new kernel creation in use_notebook_tool
-            logger.info(f"Auto-enrolling document '{config.document_id}' with new kernel")
-        
-        # Use the use_notebook_tool to properly enroll the notebook with kernel
-        result = await use_notebook_tool.execute(
-            mode=server_context.mode,
-            server_client=server_context.server_client,
-            notebook_name="default",
-            notebook_path=config.document_id,
-            use_mode="connect",
-            kernel_id=kernel_id_to_use,
-            contents_manager=server_context.contents_manager,
-            kernel_manager=server_context.kernel_manager,
-            session_manager=server_context.session_manager,
-            notebook_manager=notebook_manager,
-            runtime_url=config.runtime_url if config.runtime_url != "local" else None,
-            runtime_token=config.runtime_token,
+        logger.info(
+            f"No kernel configured for '{config.document_id}'. "
+            "Use create_kernel + attach_kernel tools to associate a kernel."
         )
-        logger.info(f"Auto-enrollment result: {result}")
+        return
+
+    try:
+        from jupyter_mcp_server.tools.create_kernel_tool import CreateKernelTool
+        from jupyter_mcp_server.tools.attach_kernel_tool import AttachKernelTool
+
+        if config.runtime_id:
+            # Attach an existing kernel to the document
+            kernel_id = config.runtime_id
+            logger.info(
+                f"Auto-enrolling '{config.document_id}' with existing kernel '{kernel_id}'"
+            )
+            result = await AttachKernelTool().execute(
+                mode=server_context.mode,
+                server_client=server_context.server_client,
+                kernel_manager=server_context.kernel_manager,
+                notebook_manager=notebook_manager,
+                runtime_url=config.runtime_url if config.runtime_url != "local" else None,
+                runtime_token=config.runtime_token,
+                notebook_path=config.document_id,
+                kernel_id=kernel_id,
+            )
+            logger.info(f"Auto-enrollment result: {result}")
+
+        else:
+            # Create a new kernel and attach it
+            logger.info(f"Auto-enrolling '{config.document_id}' with a new kernel")
+            result_str = await CreateKernelTool().execute(
+                mode=server_context.mode,
+                server_client=server_context.server_client,
+                kernel_manager=server_context.kernel_manager,
+                notebook_manager=notebook_manager,
+                runtime_url=config.runtime_url if config.runtime_url != "local" else None,
+                runtime_token=config.runtime_token,
+            )
+            logger.info(f"Kernel creation result: {result_str}")
+
+            # Parse kernel_id from result ("Kernel created successfully.\nID: <id>\nName: <name>")
+            kernel_id = None
+            for line in result_str.splitlines():
+                if line.startswith("ID: "):
+                    kernel_id = line[4:].strip()
+                    break
+
+            if kernel_id:
+                notebook_manager.attach(config.document_id, kernel_id)
+                logger.info(
+                    f"Auto-attached kernel '{kernel_id}' to '{config.document_id}'"
+                )
+            else:
+                logger.warning(
+                    f"Could not parse kernel_id from create_kernel result: {result_str!r}"
+                )
+
     except Exception as e:
-        logger.warning(f"Failed to auto-enroll document: {e}. You can manually use it with register_notebook tool.")
+        logger.warning(
+            f"Failed to auto-enroll document '{config.document_id}': {e}. "
+            "Use create_kernel + attach_kernel tools manually."
+        )

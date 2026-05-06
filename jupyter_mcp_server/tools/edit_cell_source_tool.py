@@ -11,7 +11,7 @@ from typing import Any, Optional
 from jupyter_server_client import JupyterServerClient
 from jupyter_mcp_server.tools._base import BaseTool, ServerMode
 from jupyter_mcp_server.notebook_manager import NotebookManager
-from jupyter_mcp_server.utils import get_current_notebook_context, get_notebook_model, clean_notebook_outputs
+from jupyter_mcp_server.utils import get_notebook_model, clean_notebook_outputs
 
 
 class EditCellSourceTool(BaseTool):
@@ -126,10 +126,9 @@ class EditCellSourceTool(BaseTool):
     async def _edit_cell_websocket(
         self, notebook_manager: NotebookManager, cell_index: int,
         old_string: str, new_string: str, replace_all: bool,
-        notebook_name: str = "",
+        notebook_path: str = "",
     ) -> str:
-        _nb = notebook_name or notebook_manager.get_current_notebook() or "default"
-        async with notebook_manager.get_notebook_connection(_nb) as notebook:
+        async with notebook_manager.get_notebook_connection(notebook_path) as notebook:
             if cell_index >= len(notebook):
                 raise ValueError(f"Cell index {cell_index} out of range")
 
@@ -159,7 +158,7 @@ class EditCellSourceTool(BaseTool):
         old_string: str = None,
         new_string: str = None,
         replace_all: bool = False,
-        notebook_name: str = "",
+        notebook_path: str = "",
         **kwargs,
     ) -> str:
         """Execute the edit_cell_source tool.
@@ -173,7 +172,6 @@ class EditCellSourceTool(BaseTool):
 
             context = get_server_context()
             serverapp = context.serverapp
-            notebook_path, _ = get_current_notebook_context(notebook_manager, notebook_name=notebook_name)
 
             if serverapp and not Path(notebook_path).is_absolute():
                 root_dir = serverapp.root_dir
@@ -194,7 +192,7 @@ class EditCellSourceTool(BaseTool):
             diff = await self._edit_cell_websocket(
                 notebook_manager, cell_index,
                 old_string, new_string, replace_all,
-                notebook_name=notebook_name,
+                notebook_path=notebook_path,
             )
         else:
             raise ValueError(f"Invalid mode or missing required clients: mode={mode}")

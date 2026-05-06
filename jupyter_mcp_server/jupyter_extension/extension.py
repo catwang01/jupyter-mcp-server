@@ -176,23 +176,8 @@ class JupyterMCPServerExtensionApp(ExtensionAppJinjaMixin, ExtensionApp):
             "mcp_serverapp": self.serverapp,
         })
         
-        # Trigger auto-enrollment if document_id is configured
-        # Note: Auto-enrollment supports 3 modes:
-        # 1. With existing kernel (runtime_id set)
-        # 2. With new kernel (start_new_runtime=True)
-        # 3. Without kernel - notebook-only mode (both False/None)
         if self.document_id:
-            from jupyter_mcp_server.server import notebook_manager
-
-            if "default" not in notebook_manager:
-                notebook_manager.add_notebook(
-                    "default", None,
-                    server_url=self.document_url,
-                    token=self.document_token,
-                    path=self.document_id
-                )
-                notebook_manager.set_current_notebook("default")
-                logger.info(f"Auto-enrolled document '{self.document_id}' as 'default'")
+            logger.info(f"Auto-enrolled document '{self.document_id}' (config ready)")
         
         logger.info("Jupyter MCP Server Extension settings initialized")
     

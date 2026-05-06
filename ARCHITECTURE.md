@@ -50,10 +50,11 @@ Both modes share the same tool implementations, with automatic backend selection
         │          Tool Implementation Layer           │
         │         (jupyter_mcp_server/tools/)          │
         │                                              │
-        │  14 Tools in 3 Categories:                   │
-        │  • Server Management (2)                     │
-        │  • Multi-Notebook Management (5)             │
-        │  • Cell Operations (7)                       │
+        │  19 Tools in 4 Categories:                   │
+        │  • Server Management (3)                     │
+        │  • Kernel Management (4+2 association)       │
+        │  • Notebook Reading (3)                      │
+        │  • Cell Operations (7+1 combined)            │
         │                                              │
         │  Each tool implements:                       │
         │  - Dual-mode execution logic                 │
@@ -154,10 +155,24 @@ async def list_files(path: str = "", max_depth: int = 1, ...) -> str:
             ...
         )
     )
+
+# Kernel-notebook association: explicit attach/detach
+@mcp.tool()
+async def attach_kernel(notebook_path: str, kernel_id: str) -> str:
+    """Associate a kernel with a notebook path, enabling cell execution."""
+    return await safe_notebook_operation(
+        lambda: AttachKernelTool().execute(
+            mode=server_context.mode,
+            notebook_manager=notebook_manager,
+            notebook_path=notebook_path,
+            kernel_id=kernel_id,
+            ...
+        )
+    )
 ```
 
 **Key Responsibilities**:
-- **Tool Registration**: All 14 MCP tools are registered as FastMCP decorators
+- **Tool Registration**: All 19 MCP tools are registered as FastMCP decorators
 - **Mode Detection**: Automatically detects and initializes appropriate server mode
 - **Error Handling**: Provides `safe_notebook_operation()` wrapper with retry logic
 - **Resource Management**: Manages notebook connections and kernel lifecycle
@@ -175,25 +190,39 @@ async def list_files(path: str = "", max_depth: int = 1, ...) -> str:
 ```python
 # Tool Categories and Examples
 
-# Server Management (2 tools)
-class ListFilesTool(BaseTool):      # File system exploration
-class ListKernelsTool(BaseTool):    # Kernel management
+# Server Management (3 tools)
+class ListFilesTool(BaseTool):        # File system exploration
+class ListKernelsTool(BaseTool):      # List running kernels
+class ConnectJupyterTool(BaseTool):   # Dynamic server connection
 
-# Multi-Notebook Management (5 tools)
-class UseNotebookTool(BaseTool):    # Connect/create notebooks
-class ListNotebooksTool(BaseTool):  # List managed notebooks
-class RestartNotebookTool(BaseTool): # Restart kernels
-class UnuseNotebookTool(BaseTool):  # Disconnect notebooks
-class ReadNotebookTool(BaseTool):   # Read notebook content
+# Kernel Management (4 tools)
+class CreateKernelTool(BaseTool):     # Create standalone kernel
+class DeleteKernelTool(BaseTool):     # Stop and delete kernel
+class RestartKernelTool(BaseTool):    # Restart kernel
+class ListKernelSpecsTool(BaseTool):  # List available kernel types
 
-# Cell Operations (7 tools)
-class InsertCellTool(BaseTool):     # Insert new cells
-class DeleteCellTool(BaseTool):     # Delete cells
-class OverwriteCellSourceTool(BaseTool): # Modify cell content
-class ExecuteCellTool(BaseTool):    # Execute cells with streaming
-class ReadCellTool(BaseTool):       # Read individual cells
-class ExecuteCodeTool(BaseTool):    # Execute arbitrary code
-class InsertExecuteCodeCellTool(BaseTool): # Combined insert+execute
+# Kernel-Notebook Association (2 tools)
+class AttachKernelTool(BaseTool):     # Link kernel to notebook
+class DetachKernelTool(BaseTool):     # Unlink kernel from notebook
+
+# Notebook Reading (2 tools)
+class ReadNotebookTool(BaseTool):     # Read notebook cells
+class ReadCellTool(BaseTool):         # Read individual cell
+
+# Notebook Status (1 tool)
+class ListNotebooksTool(BaseTool):    # List notebook-kernel attachments
+
+# Cell Writing (5 tools)
+class InsertCellTool(BaseTool):       # Insert new cells
+class DeleteCellTool(BaseTool):       # Delete cells
+class OverwriteCellSourceTool(BaseTool): # Replace entire cell source
+class EditCellSourceTool(BaseTool):   # Surgical find-and-replace
+class MoveCellTool(BaseTool):         # Move cell position
+
+# Cell Execution (2 tools + 1 combined)
+class ExecuteCellTool(BaseTool):      # Execute cell in notebook
+class ExecuteCodeTool(BaseTool):      # Execute code directly in kernel
+# insert_execute_code_cell: Combined insert+execute (inline in server.py)
 ```
 
 **Implementation Architecture**:
@@ -203,9 +232,11 @@ class InsertExecuteCodeCellTool(BaseTool): # Combined insert+execute
 - **Backend Integration**: Tools automatically select appropriate backend based on mode
 
 **Tool Categories**:
-1. **Server Management**: File system and kernel introspection
-2. **Multi-Notebook Management**: Notebook lifecycle and connection management
-3. **Cell Operations**: Fine-grained cell manipulation and execution
+1. **Server Management**: File system, kernel introspection, and dynamic connection
+2. **Kernel Management**: Kernel lifecycle (create, delete, restart, list specs)
+3. **Kernel-Notebook Association**: Explicit linking of kernels to notebooks
+4. **Notebook Status**: List notebook-kernel attachment state
+5. **Cell Operations**: Fine-grained cell manipulation and execution
 
 **Dynamic Tool Registry** (`get_registered_tools()`):
 - Queries FastMCP's `list_tools()` to get all registered tools
@@ -254,24 +285,39 @@ class ServerContext:
 
 ### 7. Notebook Manager (`notebook_manager.py`)
 
-**Purpose**: Manages notebook connections and kernel lifecycle.
+**Purpose**: Manages kernel client registry and kernel-notebook attachments.
+
+**Architecture**: Notebooks (files) and Kernels (processes) are managed independently.
+Use `attach_kernel` / `detach_kernel` to associate them explicitly.
 
 **Key Features**:
-- Tracks managed notebooks with kernel associations
-- Supports both local (JUPYTER_SERVER) and remote (MCP_SERVER) modes
-- Provides `NotebookConnection` context manager for Y.js document access
-
-**Local vs Remote**:
-- **Local mode**: Notebooks tracked with `is_local=True`, no WebSocket connections
-- **Remote mode**: Establishes WebSocket connections via `NbModelClient`
+- Kernel client registry (kernel_id → KernelClient or metadata dict)
+- Attachment registry (notebook_path → kernel_id)
+- `NotebookConnection` context manager for Y.js document access (MCP_SERVER mode)
+- Legacy default kernel support for `/api/connect` route
 
 ```python
 class NotebookManager:
-    def add_notebook(self, name, kernel, server_url="local", ...):
-        """Add notebook with mode detection (local vs remote)."""
-    
-    def get_current_connection(self):
-        """Get WebSocket connection (MCP_SERVER mode only)."""
+    # Kernel client registry
+    def add_kernel_client(self, kernel_id, client): ...
+    def get_kernel_client(self, kernel_id): ...
+    def remove_kernel_client(self, kernel_id): ...
+    def list_kernel_clients(self): ...
+
+    # Attachment registry (notebook_path ↔ kernel_id)
+    def attach(self, notebook_path, kernel_id): ...
+    def detach(self, notebook_path): ...
+    def detach_by_kernel(self, kernel_id): ...
+    def get_kernel_id(self, notebook_path): ...
+    def list_attachments(self): ...
+
+    # Notebook WebSocket connection (MCP_SERVER mode)
+    def get_notebook_connection(self, notebook_path): ...
+
+    # Legacy helpers for /api/connect route
+    def set_default_kernel(self, kernel_id, client): ...
+    def get_default_kernel(self): ...
+    def clear_default_kernel(self): ...
 ```
 
 ### 8. Hook System (`hooks.py`, `otel_hook.py`)
@@ -359,31 +405,27 @@ c.JupyterMCPServerExtensionApp.runtime_url = "local"
 
 ## Request Flow Examples
 
-### Example 1: List Notebooks (JUPYTER_SERVER Mode with LocalBackend)
+### Example 1: Create and Attach Kernel
 
 ```
 MCP Client
-  → POST /mcp/tools/call {"tool_name": "list_notebooks"}
-    → MCPSSEHandler (or MCPToolsCallHandler)
-      → FastMCP calls @mcp.tool() wrapper
-        → ListNotebooksTool().execute(
-            mode=JUPYTER_SERVER,
-            notebook_manager=notebook_manager
-          )
-          → notebook_manager.list_all_notebooks()
-            → Returns managed notebooks from memory
-          ← TSV-formatted table
-        ← Tool result
-      ← JSON-RPC response
-    ← SSE message
-  ← Tool result displayed
+  → create_kernel_tool(kernel_name="python3")
+    → CreateKernelTool().execute(mode=JUPYTER_SERVER, ...)
+      → kernel_manager.start_kernel()
+      → notebook_manager.add_kernel_client(kernel_id, client)
+    ← "Kernel created successfully.\nID: <id>\nName: python3"
+
+  → attach_kernel(notebook_path="my_notebook.ipynb", kernel_id="<id>")
+    → AttachKernelTool().execute(...)
+      → notebook_manager.attach("my_notebook.ipynb", "<id>")
+    ← "Attached kernel <id> to my_notebook.ipynb"
 ```
 
 ### Example 2: Read Cell (JUPYTER_SERVER Mode with LocalBackend)
 
 ```
 MCP Client
-  → POST /mcp/tools/call {"tool_name": "read_cell", "arguments": {"cell_index": 0}}
+  → POST /mcp/tools/call {"tool_name": "read_cell", "arguments": {"notebook_path": "nb.ipynb", "cell_index": 0}}
     → MCPSSEHandler (or MCPToolsCallHandler)
       → FastMCP calls @mcp.tool() wrapper
         → ReadCellTool().execute(
@@ -407,21 +449,16 @@ MCP Client
 
 ```
 MCP Client
-  → POST /mcp/tools/call {"tool_name": "execute_cell", "arguments": {"cell_index": 0}}
-    → FastMCP calls @mcp.tool() wrapper
-      → ExecuteCellTool().execute(
-          mode=MCP_SERVER,
-          notebook_manager=notebook_manager
-        )
-        → notebook_manager.get_current_connection()
-          → NbModelClient establishes WebSocket to Y.js document
-          → Access collaborative Y.js document
-        → Execute code via kernel connection
-          → HTTP/WebSocket to remote kernel
-          → Real-time execution with progress updates
-        ← Execution outputs with rich formatting
-      ← Tool result
-    ← Response
+  → execute_cell(notebook_path="nb.ipynb", cell_index=0)
+    → ExecuteCellTool().execute(mode=MCP_SERVER, ...)
+      → notebook_manager.get_kernel_id("nb.ipynb")  → kernel_id
+      → notebook_manager.get_notebook_connection("nb.ipynb")
+        → NbModelClient establishes WebSocket to Y.js document
+      → Execute code via kernel connection
+        → HTTP/WebSocket to remote kernel
+        → Real-time execution with progress updates
+      ← Execution outputs with rich formatting
+    ← Tool result
   ← Outputs displayed
 ```
 
@@ -436,7 +473,7 @@ MCP Client
    ↓
 4. FastMCP server initialization (server.py)
    ↓
-5. Tool instance creation (14 tool implementations)
+5. Tool instance creation (19 tool implementations)
    ↓
 6. @mcp.tool() wrapper registration
    ↓
@@ -455,7 +492,7 @@ MCP Client
 jupyter_mcp_server/
 ├── __init__.py                 # Package initialization
 ├── __main__.py                 # Module entry point (imports CLI)
-├── __version__.py              # Version information (0.17.1)
+├── __version__.py              # Version information
 │
 ├── CLI.py                      # 🏠 Command-Line Interface (Primary Entry Point)
 │   ├── Command parsing and validation
@@ -467,35 +504,50 @@ jupyter_mcp_server/
 │
 ├── server.py                   # 🔧 FastMCP Server Layer
 │   ├── MCP protocol implementation
-│   ├── Tool registration (14 @mcp.tool decorators)
+│   # Tool registration (19 @mcp.tool decorators)
 │   ├── Error handling with safe_notebook_operation()
 │   ├── Resource management and cleanup
 │   ├── Dynamic tool registry (get_registered_tools())
 │   └── Transport support (stdio + streamable-http)
 │
 ├── tools/                      # 🛠️ Built-in Tool Implementations
-│   ├── __init__.py            # Exports BaseTool, ServerMode
+│   ├── __init__.py            # Exports BaseTool, ServerMode, all tool classes
 │   ├── _base.py               # Abstract base class for all tools
 │   │
-│   # Server Management Tools (2)
+│   # Server Management Tools (3)
 │   ├── list_files_tool.py     # File system exploration
-│   ├── list_kernels_tool.py   # Kernel introspection
+│   ├── list_kernels_tool.py   # List running kernels
+│   ├── connect_jupyter_tool.py # Dynamic server connection
 │   │
-│   # Multi-Notebook Management Tools (5)
-│   ├── use_notebook_tool.py   # Connect/create notebooks
-│   ├── list_notebooks_tool.py # List managed notebooks
-│   ├── restart_notebook_tool.py # Restart kernels
-│   ├── unuse_notebook_tool.py # Disconnect notebooks
-│   ├── read_notebook_tool.py  # Read notebook content
+│   # Kernel Management Tools (4)
+│   ├── create_kernel_tool.py  # Create standalone kernel
+│   ├── delete_kernel_tool.py  # Stop and delete kernel
+│   ├── restart_kernel_tool.py # Restart kernel
+│   ├── list_kernel_specs_tool.py # List available kernel types
 │   │
-│   # Cell Operation Tools (7)
+│   # Kernel-Notebook Association Tools (2)
+│   ├── attach_kernel_tool.py  # Link kernel to notebook
+│   ├── detach_kernel_tool.py  # Unlink kernel from notebook
+│   │
+│   # Notebook Reading Tools (2)
+│   ├── read_notebook_tool.py  # Read notebook cells
 │   ├── read_cell_tool.py      # Read individual cells
+│   │
+│   # Notebook Status Tools (1)
+│   ├── list_notebooks_tool.py # List notebook-kernel attachments
+│   │
+│   # Cell Writing Tools (5)
 │   ├── insert_cell_tool.py    # Insert new cells
 │   ├── delete_cell_tool.py    # Delete cells
-│   ├── overwrite_cell_source_tool.py # Modify cell content
-│   ├── execute_cell_tool.py   # Execute cells with streaming
-│   ├── execute_code_tool.py   # Execute arbitrary code
-│   └── insert_execute_code_cell # Combined insert+execute (inline in server.py)
+│   ├── overwrite_cell_source_tool.py # Replace entire cell source
+│   ├── edit_cell_source_tool.py # Surgical find-and-replace
+│   ├── move_cell_tool.py      # Move cell position
+│   │
+│   # Cell Execution Tools (2 + insert_execute_code_cell inline in server.py)
+│   ├── execute_cell_tool.py   # Execute cell in notebook
+│   ├── execute_code_tool.py   # Execute code directly in kernel
+│   │
+│   └── jupyter_cite_prompt.py # MCP prompt resource
 │
 ├── config.py                   # ⚙️ Configuration Management
 │   ├── Singleton config object (JupyterMCPConfig)
@@ -503,11 +555,11 @@ jupyter_mcp_server/
 │   ├── URL and token resolution
 │   └── Provider-specific settings
 │
-├── notebook_manager.py         # 📚 Notebook Lifecycle Management
-│   ├── Multi-notebook support
-│   ├── Kernel connection management
-│   ├── Context managers for resources
-│   └── Dual-mode operation (local/remote)
+├── notebook_manager.py         # 📚 Kernel & Attachment Management
+│   ├── Kernel client registry (kernel_id → client)
+│   ├── Attachment registry (notebook_path → kernel_id)
+│   ├── NotebookConnection context manager (WebSocket/Y.js)
+│   └── Legacy default kernel helpers
 │
 ├── server_context.py           # 🎯 Server Context (MCP_SERVER mode)
 │   ├── Mode detection and initialization
@@ -532,8 +584,8 @@ jupyter_mcp_server/
 │   └── maybe_register_otel() auto-setup
 │
 ├── enroll.py                   # 🔗 Auto-Enrollment System
-│   ├── Automatic notebook connection
-│   ├── Kernel startup and management
+│   ├── Automatic kernel creation + notebook attachment
+│   ├── Supports existing kernel (runtime_id) or new kernel
 │   └── Configuration-based initialization
 │
 ├── models.py                   # 📋 Data Models
@@ -562,6 +614,6 @@ jupyter_mcp_server/
 
 ---
 
-**Version**: 0.2.0
-**Last Updated**: October 2025
-**Status**: Complete implementation with dual-mode architecture and backend abstraction
+**Version**: 0.3.0
+**Last Updated**: May 2026
+**Status**: Refactored architecture with independent kernel/notebook management and explicit attachment model

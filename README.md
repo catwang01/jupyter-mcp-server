@@ -82,18 +82,27 @@ For more details on each tool, their parameters, and return values, please refer
 | Name             | Description                                                                                |
 | :--------------- | :----------------------------------------------------------------------------------------- |
 | `list_files`     | List files and directories in the Jupyter server's file system.                            |
-| `list_kernels`   | List all available and running kernel sessions on the Jupyter server.                      |
-| `connect_to_jupyter` | Connect to a Jupyter server dynamically without restarting the MCP server. *Not available when running as Jupyter extension. Useful for switching servers dynamically or avoiding hardcoded configuration.* [Read more](https://jupyter-mcp-server.datalayer.tech/reference/tools/#3-connect_to_jupyter) |
+| `list_kernels`   | List all running kernel sessions on the Jupyter server.                                    |
+| `list_kernel_specs` | List all available kernel specs that can be started on the Jupyter server.               |
+| `connect_to_jupyter` | Connect to a Jupyter server dynamically without restarting the MCP server. *Not available when running as Jupyter extension.* |
 
-#### Multi-Notebook Management Tools
+#### Kernel Management Tools
 
 | Name               | Description                                                                              |
 | :----------------- | :--------------------------------------------------------------------------------------- |
-| `use_notebook`     | Connect to a notebook file, create a new one, or switch between notebooks.               |
-| `list_notebooks`   | List all notebooks available on the Jupyter server and their status                      |
-| `restart_notebook` | Restart the kernel for a specific managed notebook.                                      |
-| `unuse_notebook`   | Disconnect from a specific notebook and release its resources.                           |
+| `create_kernel`    | Create a new standalone kernel. Returns the kernel ID.                                   |
+| `delete_kernel`    | Stop and delete a kernel. Also detaches it from all associated notebooks.                |
+| `restart_kernel`   | Restart a kernel, clearing its memory state and imported packages.                       |
+| `attach_kernel`    | Associate a kernel with a notebook path, enabling cell execution.                        |
+| `detach_kernel`    | Remove the kernel association from a notebook. The kernel keeps running.                  |
+
+#### Notebook Reading Tools
+
+| Name               | Description                                                                              |
+| :----------------- | :--------------------------------------------------------------------------------------- |
+| `list_notebooks`   | List all notebooks and their attached kernel IDs.                                        |
 | `read_notebook`    | Read notebook cells source content with brief or detailed format options.                |
+| `read_cell`        | Read the full content (Metadata, Source and Outputs) of a single cell.                   |
 
 #### Cell Operations and Execution Tools
 

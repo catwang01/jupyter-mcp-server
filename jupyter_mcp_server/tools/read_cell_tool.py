@@ -9,7 +9,6 @@ from jupyter_server_client import JupyterServerClient
 from jupyter_mcp_server.tools._base import BaseTool, ServerMode
 from jupyter_mcp_server.notebook_manager import NotebookManager
 from jupyter_mcp_server.models import Notebook
-from jupyter_mcp_server.utils import get_current_notebook_context
 from mcp.types import ImageContent
 
 
@@ -28,7 +27,7 @@ class ReadCellTool(BaseTool):
         # Tool-specific parameters
         cell_index: int = None,
         include_outputs: bool = True,
-        notebook_name: str = "",
+        notebook_path: str = "",
         **kwargs
     ) -> list[str | ImageContent]:
         """Execute the read_cell tool.
@@ -48,7 +47,6 @@ class ReadCellTool(BaseTool):
             # Local mode: read notebook directly from file system.
             # Guard against no active notebook — without this, a None path causes
             # 'quote_from_bytes() expected bytes' deep in the contents manager.
-            notebook_path, _ = get_current_notebook_context(notebook_manager, notebook_name=notebook_name)
 
             if not notebook_path:
                 return ["No active notebook. Use the register_notebook tool to activate a notebook first."]
@@ -59,8 +57,7 @@ class ReadCellTool(BaseTool):
             notebook = Notebook(**model['content'])
         elif mode == ServerMode.MCP_SERVER and notebook_manager is not None:
             # Remote mode: use WebSocket connection to Y.js document.
-            _nb = notebook_name or notebook_manager.get_current_notebook() or "default"
-            async with notebook_manager.get_notebook_connection(_nb) as notebook_content:
+            async with notebook_manager.get_notebook_connection(notebook_path) as notebook_content:
                 notebook = Notebook(**notebook_content.as_dict())
         else:
             raise ValueError(f"Invalid mode or missing required clients: mode={mode}")

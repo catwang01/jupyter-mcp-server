@@ -10,7 +10,7 @@ import nbformat
 from jupyter_server_client import JupyterServerClient
 from jupyter_mcp_server.tools._base import BaseTool, ServerMode
 from jupyter_mcp_server.notebook_manager import NotebookManager
-from jupyter_mcp_server.utils import get_current_notebook_context, get_notebook_model, clean_notebook_outputs
+from jupyter_mcp_server.utils import get_notebook_model, clean_notebook_outputs
 from jupyter_mcp_server.models import Notebook
 
 
@@ -129,15 +129,14 @@ class MoveCellTool(BaseTool):
         notebook_manager: NotebookManager,
         source_index: int,
         target_index: int,
-        notebook_name: str = "",
+        notebook_path: str = "",
     ) -> tuple[Notebook, dict]:
         """Move cell using WebSocket connection (MCP_SERVER mode).
 
         Returns:
             Tuple of (notebook, moved_cell_info)
         """
-        _nb = notebook_name or notebook_manager.get_current_notebook() or "default"
-        async with notebook_manager.get_notebook_connection(_nb) as notebook:
+        async with notebook_manager.get_notebook_connection(notebook_path) as notebook:
             self._validate_move(source_index, target_index, len(notebook))
 
             if source_index == target_index:
@@ -166,7 +165,7 @@ class MoveCellTool(BaseTool):
         # Tool-specific parameters
         source_index: int = None,
         target_index: int = None,
-        notebook_name: str = "",
+        notebook_path: str = "",
         **kwargs,
     ) -> str:
         """Execute the move_cell tool.
@@ -184,7 +183,6 @@ class MoveCellTool(BaseTool):
 
             context = get_server_context()
             serverapp = context.serverapp
-            notebook_path, _ = get_current_notebook_context(notebook_manager, notebook_name=notebook_name)
 
             if serverapp and not Path(notebook_path).is_absolute():
                 root_dir = serverapp.root_dir
@@ -201,7 +199,7 @@ class MoveCellTool(BaseTool):
 
         elif mode == ServerMode.MCP_SERVER and notebook_manager is not None:
             nb, cell_info = await self._move_cell_websocket(
-                notebook_manager, source_index, target_index, notebook_name=notebook_name
+                notebook_manager, source_index, target_index, notebook_path=notebook_path
             )
         else:
             raise ValueError(f"Invalid mode or missing required clients: mode={mode}")

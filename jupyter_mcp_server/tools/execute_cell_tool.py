@@ -15,13 +15,11 @@ from mcp.types import ImageContent
 from jupyter_mcp_server.hooks import HookEvent, HookRegistry
 from jupyter_mcp_server.tools._base import BaseTool, ServerMode
 from jupyter_mcp_server.utils import (
-    get_current_notebook_context,
     execute_via_execution_stack,
     safe_extract_outputs,
     get_jupyter_ydoc,
     clean_notebook_outputs,
     wait_for_kernel_idle,
-    safe_extract_outputs,
     execute_cell_with_forced_sync,
     extract_output
 )
@@ -105,12 +103,11 @@ class ExecuteCellTool(BaseTool):
         notebook_manager=None,
         serverapp=None,
         # Tool-specific parameters
+        notebook_path: str = "",
         cell_index: int = None,
         timeout_seconds: int = 60,
         stream: bool = False,
         progress_interval: int = 5,
-        ensure_kernel_alive_fn=None,
-        notebook_name: str = "",
         **kwargs
     ) -> List[Union[str, ImageContent]]:
         """Execute a cell with configurable timeout and optional streaming progress updates.
@@ -141,33 +138,18 @@ class ExecuteCellTool(BaseTool):
             if kernel_manager is None:
                 raise ValueError("kernel_manager is required for JUPYTER_SERVER mode")
 
-            # Get notebook_path and kernel_id first
-            notebook_path, kernel_id = get_current_notebook_context(notebook_manager, notebook_name=notebook_name)
+            # Resolve notebook_path and look up attached kernel
+            kernel_id = notebook_manager.get_kernel_id(notebook_path) if notebook_manager else None
+            if kernel_id is None:
+                raise ValueError(
+                    f"No kernel attached to '{notebook_path}'. "
+                    f"Use attach_kernel(notebook_path, kernel_id) first."
+                )
 
             # Resolve to absolute path
             if notebook_path and serverapp and not Path(notebook_path).is_absolute():
                 root_dir = serverapp.root_dir
                 notebook_path = str(Path(root_dir) / notebook_path)
-
-            # Check if kernel needs to be started
-            if kernel_id is None:
-                # No kernel available - start a new one on demand
-                logger.info("No kernel_id available, starting new kernel for execute_cell")
-                kernel_id = await kernel_manager.start_kernel()
-
-                # Wait a bit for kernel to initialize
-                await asyncio.sleep(1.0)
-                logger.info(f"Kernel {kernel_id} started and initialized")
-
-                # Store the kernel in notebook_manager if available
-                if notebook_manager is not None:
-                    kernel_info = {"id": kernel_id}
-                    notebook_manager.add_notebook(
-                        name=notebook_path,
-                        kernel=kernel_info,
-                        server_url="local",
-                        path=notebook_path
-                    )
 
             logger.info(f"Executing cell {cell_index} in JUPYTER_SERVER mode (timeout: {timeout_seconds}s)")
 
@@ -248,12 +230,21 @@ class ExecuteCellTool(BaseTool):
                 return outputs
 
         elif mode == ServerMode.MCP_SERVER:
-            kernel = ensure_kernel_alive_fn()
-            await wait_for_kernel_idle(kernel, max_wait_seconds=30)
-            current_nb = notebook_name or notebook_manager.get_current_notebook() or "default"
-            kid = notebook_manager.get_kernel_id(current_nb) or ""
+            # Look up attached kernel
+            kernel_id = notebook_manager.get_kernel_id(notebook_path) if notebook_manager else None
+            if kernel_id is None:
+                raise ValueError(
+                    f"No kernel attached to '{notebook_path}'. "
+                    f"Use attach_kernel(notebook_path, kernel_id) first."
+                )
+            kernel = notebook_manager.get_kernel_client(kernel_id)
+            if kernel is None:
+                raise ValueError(f"Kernel client for '{kernel_id}' not found in manager.")
 
-            async with notebook_manager.get_notebook_connection(current_nb) as notebook:
+            await wait_for_kernel_idle(kernel, max_wait_seconds=30)
+            kid = kernel_id
+
+            async with notebook_manager.get_notebook_connection(notebook_path) as notebook:
                 num_cells = len(notebook)
                 if cell_index >= num_cells:
                     raise ValueError(f"Cell index {cell_index} out of range (notebook has {num_cells} cells)")
