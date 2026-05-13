@@ -9,7 +9,7 @@ import logging
 import time
 import nbformat
 from pathlib import Path
-from typing import Union, List
+from typing import Union, List, Optional
 from mcp.types import ImageContent
 
 from jupyter_mcp_server.hooks import HookEvent, HookRegistry
@@ -21,7 +21,8 @@ from jupyter_mcp_server.utils import (
     clean_notebook_outputs,
     wait_for_kernel_idle,
     execute_cell_with_forced_sync,
-    extract_output
+    extract_output,
+    resolve_cell_index
 )
 
 logger = logging.getLogger(__name__)
@@ -105,6 +106,7 @@ class ExecuteCellTool(BaseTool):
         # Tool-specific parameters
         notebook_path: str = "",
         cell_index: int = None,
+        cell_id: Optional[str] = None,
         timeout_seconds: int = 60,
         stream: bool = False,
         progress_interval: int = 5,
@@ -168,12 +170,13 @@ class ExecuteCellTool(BaseTool):
             if ydoc:
                 # Notebook is open - use YDoc and RTC
                 logger.info(f"Notebook {file_id} is open, using RTC mode")
-                
+
+                cell_index = resolve_cell_index(ydoc.ycells, cell_id=cell_id, cell_index=cell_index)
                 num_cells = len(ydoc.ycells)
                 if cell_index >= num_cells:
                     raise ValueError(f"Cell index {cell_index} out of range (notebook has {num_cells} cells)")
 
-                cell_id = ydoc.ycells[cell_index].get("id")
+                ydoc_cell_id = ydoc.ycells[cell_index].get("id")
                 cell_source = ydoc.ycells[cell_index].get("source")
 
                 if isinstance(cell_source, str):
@@ -192,7 +195,7 @@ class ExecuteCellTool(BaseTool):
                     kernel_id=kernel_id,
                     code=code_to_execute,
                     document_id=document_id,
-                    cell_id=cell_id,
+                    cell_id=ydoc_cell_id,
                     timeout=timeout_seconds
                 )
 
@@ -204,6 +207,7 @@ class ExecuteCellTool(BaseTool):
                 with open(notebook_path, 'r', encoding='utf-8') as f:
                     notebook = nbformat.read(f, as_version=4)
 
+                cell_index = resolve_cell_index(notebook.cells, cell_id=cell_id, cell_index=cell_index)
                 num_cells = len(notebook.cells)
                 if cell_index >= num_cells:
                     raise ValueError(f"Cell index {cell_index} out of range (notebook has {num_cells} cells)")
@@ -245,6 +249,7 @@ class ExecuteCellTool(BaseTool):
             kid = kernel_id
 
             async with notebook_manager.get_notebook_connection(notebook_path) as notebook:
+                cell_index = resolve_cell_index(notebook.as_dict()["cells"], cell_id=cell_id, cell_index=cell_index)
                 num_cells = len(notebook)
                 if cell_index >= num_cells:
                     raise ValueError(f"Cell index {cell_index} out of range (notebook has {num_cells} cells)")
