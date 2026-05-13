@@ -536,10 +536,11 @@ async def insert_cell(
 @with_hooks("overwrite_cell_source")
 async def overwrite_cell_source(
     notebook_path: Annotated[str, Field(description="Path to the notebook file, relative to the Jupyter server root")],
-    cell_index: Annotated[int, Field(description="Index of the cell to overwrite (0-based)", ge=0)],
     cell_source: Annotated[str, Field(description="New complete cell source")],
+    cell_index: Annotated[Optional[int], Field(description="Index of the cell to overwrite (0-based). Required if cell_id not provided.", ge=0)] = None,
+    cell_id: Annotated[Optional[str], Field(description="Stable cell ID (nbformat 4.5+). Prefer over cell_index when available.")] = None,
 ) -> Annotated[str, Field(description="Success message with diff showing changes made")]:
-    """Replace the entire source of a cell. Use edit_cell_source for small targeted changes."""
+    """Replace the entire source of a cell. Prefer cell_id over cell_index when available."""
     return await safe_notebook_operation(
         lambda: OverwriteCellSourceTool().execute(
             mode=server_context.mode,
@@ -549,6 +550,7 @@ async def overwrite_cell_source(
             notebook_manager=notebook_manager,
             notebook_path=notebook_path,
             cell_index=cell_index,
+            cell_id=cell_id,
             cell_source=cell_source,
         )
     )
