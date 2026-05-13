@@ -329,7 +329,7 @@ class ExecuteCellTool(BaseTool):
                                         outputs_log.append(extracted)
 
                         except Exception as e:
-                            outputs_log.append(f"[ERROR: {e}]")
+                            outputs_log.append(f"[ERROR: {type(e).__name__}: {e}]")
 
                     result = outputs_log if outputs_log else ["[No output generated]"]
                     await hooks.fire(

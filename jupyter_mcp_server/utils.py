@@ -592,7 +592,7 @@ async def execute_via_execution_stack(
 
     except Exception as e:
         logger.error(f"Error executing via ExecutionStack: {e}", exc_info=True)
-        return [f"[ERROR: {str(e)}]"]
+        return [f"[ERROR: {type(e).__name__}: {e}]"]
 
 
 async def execute_code_local(
@@ -781,7 +781,7 @@ async def execute_code_local(
 
     except Exception as e:
         logger.error(f"Error executing code locally: {e}")
-        return [f"[ERROR: {str(e)}]"]
+        return [f"[ERROR: {type(e).__name__}: {e}]"]
 
 
 async def execute_cell_local(
@@ -964,7 +964,7 @@ async def execute_cell_local(
         
     except Exception as e:
         logger.error(f"Error executing cell locally: {e}")
-        return [f"[ERROR: {str(e)}]"]
+        return [f"[ERROR: {type(e).__name__}: {e}]"]
 
 
 async def get_jupyter_ydoc(serverapp: Any, file_id: str):

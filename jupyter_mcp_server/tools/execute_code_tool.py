@@ -106,7 +106,7 @@ class ExecuteCodeTool(BaseTool):
             logger.error(f"Error executing IPython code: {e}")
             await hooks.fire(HookEvent.AFTER_EXECUTE, code=code, kernel_id=kernel_id,
                              metadata={}, outputs=[], error=e, context=hook_ctx)
-            return [f"[ERROR: {str(e)}]"]
+            return [f"[ERROR: {type(e).__name__}: {e}]"]
     
     async def execute(
         self,

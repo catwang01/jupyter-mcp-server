@@ -187,6 +187,21 @@ async def attach_kernel(notebook_path: str, kernel_id: str) -> str:
 
 **Built-in Tool Implementations** - Complete set of Jupyter operations:
 
+**Important: Gateway-Aware Async Handling**
+
+When Jupyter is configured with `--GatewayClient.url`, key manager methods become async:
+- `GatewayKernelSpecManager.get_all_specs()` — async (base `KernelSpecManager` is sync)
+- `GatewayMappingKernelManager.list_kernels()` — async (base `MappingKernelManager` is sync)
+
+All tool methods that call these must:
+1. Be `async def` themselves
+2. Use `await` on these calls
+3. Guard against `None` return values (gateway may return missing keys)
+
+This applies to `ListKernelSpecsTool._list_specs_local()` and
+`ListKernelsTool._list_kernels_local()`. Do **not** attempt to run these calls in a
+separate thread — the gateway HTTP client depends on tornado's main event loop.
+
 ```python
 # Tool Categories and Examples
 
@@ -237,6 +252,35 @@ class ExecuteCodeTool(BaseTool):      # Execute code directly in kernel
 3. **Kernel-Notebook Association**: Explicit linking of kernels to notebooks
 4. **Notebook Status**: List notebook-kernel attachment state
 5. **Cell Operations**: Fine-grained cell manipulation and execution
+
+**Cell ID Addressing**:
+
+All cell-locating tools accept an optional `cell_id` parameter (nbformat 4.5 stable cell ID) as an alternative to positional `cell_index`. When both are provided, `cell_id` takes priority. Resolution is handled by a shared utility:
+
+```python
+# utils.py
+def resolve_cell_index(cells, *, cell_id=None, cell_index=None) -> int:
+    """Resolve cell_id or cell_index to a concrete integer index.
+    Priority: cell_id > cell_index.
+    Works with dict-like cells (Y.js, WebSocket) and object cells (nbformat)."""
+```
+
+Each tool calls `resolve_cell_index()` after loading cells but before bounds checking. Tool-specific variations:
+- `insert_cell` / `insert_execute_code_cell`: Additional `insert_position: Literal["before", "after"]` controls placement relative to the referenced cell
+- `delete_cell`: Accepts `cell_ids: list[str]` which is merged (union) with `cell_indices`
+- `move_cell`: Accepts `source_cell_id` and `target_cell_id` independently (can mix with index params)
+
+`read_notebook` and `read_cell` output includes cell IDs so downstream tools can discover and reference them.
+
+**Output Format (TSV)**:
+
+All listing tools (`list_kernels`, `list_kernel_specs`, `list_notebooks`, `list_files`, `read_notebook`) return tab-separated values (TSV) via `format_TSV(headers, rows)` from `utils.py`. Design rationale:
+- MCP tool responses are consumed by LLMs, not parsed by programs
+- TSV is ~40% more token-efficient than equivalent JSON (no braces, quotes, commas)
+- LLMs read tabular TSV as easily as JSON arrays
+- The MCP protocol already provides structure (tool name, content type); content layer doesn't need another JSON wrapper
+
+When a listing tool has no results, it returns a human-readable message (e.g., "No kernels found on the Jupyter server.") instead of an empty table.
 
 **Dynamic Tool Registry** (`get_registered_tools()`):
 - Queries FastMCP's `list_tools()` to get all registered tools
@@ -567,6 +611,7 @@ jupyter_mcp_server/
 │   └── Configuration state management
 │
 ├── utils.py                    # 🧰 Utility Functions
+│   ├── Cell ID resolution (resolve_cell_index)
 │   ├── Execution utilities (local/remote)
 │   ├── Output processing and formatting
 │   ├── Kernel management helpers
