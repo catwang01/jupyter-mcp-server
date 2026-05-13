@@ -673,10 +673,14 @@ async def insert_execute_code_cell(
 @with_hooks("read_cell")
 async def read_cell(
     notebook_path: Annotated[str, Field(description="Path to the notebook file, relative to the Jupyter server root")],
-    cell_index: Annotated[int, Field(description="Index of the cell to read (0-based)", ge=0)],
+    cell_index: Annotated[Optional[int], Field(description="Index of the cell to read (0-based). Required if cell_id not provided.", ge=0)] = None,
     include_outputs: Annotated[bool, Field(description="Include outputs in the response (only for code cells)")] = True,
+    cell_id: Annotated[Optional[str], Field(description="Stable cell ID (nbformat 4.5+). Prefer over cell_index when available.")] = None,
 ) -> Annotated[list[str | ImageContent], Field(description="Cell information including index, type, source, and outputs")]:
-    """Read a specific cell from a notebook."""
+    """Read a specific cell from a notebook.
+
+Prefer cell_id when available (shown in read_notebook output). Fall back to cell_index (0-based) when cell IDs are not available.
+"""
     return await safe_notebook_operation(
         lambda: ReadCellTool().execute(
             mode=server_context.mode,
@@ -685,6 +689,7 @@ async def read_cell(
             notebook_manager=notebook_manager,
             notebook_path=notebook_path,
             cell_index=cell_index,
+            cell_id=cell_id,
             include_outputs=include_outputs,
         )
     )
