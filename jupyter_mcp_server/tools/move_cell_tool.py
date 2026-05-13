@@ -10,7 +10,7 @@ import nbformat
 from jupyter_server_client import JupyterServerClient
 from jupyter_mcp_server.tools._base import BaseTool, ServerMode
 from jupyter_mcp_server.notebook_manager import NotebookManager
-from jupyter_mcp_server.utils import get_notebook_model, clean_notebook_outputs
+from jupyter_mcp_server.utils import get_notebook_model, clean_notebook_outputs, resolve_cell_index
 from jupyter_mcp_server.models import Notebook
 
 
@@ -68,20 +68,26 @@ class MoveCellTool(BaseTool):
         notebook_path: str,
         source_index: int,
         target_index: int,
-    ) -> tuple[Notebook, dict]:
+        *,
+        source_cell_id=None,
+        target_cell_id=None,
+    ) -> tuple:
         """Move cell using YDoc (collaborative editing mode).
 
         Returns:
-            Tuple of (notebook, moved_cell_info)
+            Tuple of (notebook, moved_cell_info, resolved_source_index, resolved_target_index)
         """
         nb = await get_notebook_model(serverapp, notebook_path)
         if nb:
+            cells = nb.as_dict()["cells"]
+            source_index = resolve_cell_index(cells, cell_id=source_cell_id, cell_index=source_index)
+            target_index = resolve_cell_index(cells, cell_id=target_cell_id, cell_index=target_index)
             self._validate_move(source_index, target_index, len(nb))
             if source_index == target_index:
                 cell_source = nb.get_cell_source(source_index)
                 nb_dict = nb.as_dict()
                 cell_type = nb_dict["cells"][source_index].get("cell_type", "code")
-                return Notebook(**nb_dict), {"cell_type": cell_type, "source": cell_source}
+                return Notebook(**nb_dict), {"cell_type": cell_type, "source": cell_source}, source_index, target_index
 
             deleted = nb.delete_cell(source_index)
             cell_type = deleted.get("cell_type", "code")
@@ -89,25 +95,33 @@ class MoveCellTool(BaseTool):
             if isinstance(cell_source, list):
                 cell_source = "".join(cell_source)
             nb.insert_cell(target_index, cell_source, cell_type)
-            return Notebook(**nb.as_dict()), {"cell_type": cell_type, "source": cell_source}
+            return Notebook(**nb.as_dict()), {"cell_type": cell_type, "source": cell_source}, source_index, target_index
         else:
-            return await self._move_cell_file(notebook_path, source_index, target_index)
+            return await self._move_cell_file(
+                notebook_path, source_index, target_index,
+                source_cell_id=source_cell_id, target_cell_id=target_cell_id,
+            )
 
     async def _move_cell_file(
         self,
         notebook_path: str,
         source_index: int,
         target_index: int,
-    ) -> tuple[Notebook, dict]:
+        *,
+        source_cell_id=None,
+        target_cell_id=None,
+    ) -> tuple:
         """Move cell using file operations (non-collaborative mode).
 
         Returns:
-            Tuple of (notebook, moved_cell_info)
+            Tuple of (notebook, moved_cell_info, resolved_source_index, resolved_target_index)
         """
         with open(notebook_path, "r", encoding="utf-8") as f:
             notebook = nbformat.read(f, as_version=4)
 
         clean_notebook_outputs(notebook)
+        source_index = resolve_cell_index(notebook.cells, cell_id=source_cell_id, cell_index=source_index)
+        target_index = resolve_cell_index(notebook.cells, cell_id=target_cell_id, cell_index=target_index)
         self._validate_move(source_index, target_index, len(notebook.cells))
 
         moved_cell = notebook.cells[source_index]
@@ -122,7 +136,7 @@ class MoveCellTool(BaseTool):
             with open(notebook_path, "w", encoding="utf-8") as f:
                 nbformat.write(notebook, f)
 
-        return Notebook(**notebook), cell_info
+        return Notebook(**notebook), cell_info, source_index, target_index
 
     async def _move_cell_websocket(
         self,
@@ -130,20 +144,26 @@ class MoveCellTool(BaseTool):
         source_index: int,
         target_index: int,
         notebook_path: str = "",
-    ) -> tuple[Notebook, dict]:
+        *,
+        source_cell_id=None,
+        target_cell_id=None,
+    ) -> tuple:
         """Move cell using WebSocket connection (MCP_SERVER mode).
 
         Returns:
-            Tuple of (notebook, moved_cell_info)
+            Tuple of (notebook, moved_cell_info, resolved_source_index, resolved_target_index)
         """
         async with notebook_manager.get_notebook_connection(notebook_path) as notebook:
+            cells = notebook.as_dict()["cells"]
+            source_index = resolve_cell_index(cells, cell_id=source_cell_id, cell_index=source_index)
+            target_index = resolve_cell_index(cells, cell_id=target_cell_id, cell_index=target_index)
             self._validate_move(source_index, target_index, len(notebook))
 
             if source_index == target_index:
                 cell_source = notebook.get_cell_source(source_index)
                 nb_dict = notebook.as_dict()
                 cell_type = nb_dict["cells"][source_index].get("cell_type", "code")
-                return Notebook(**nb_dict), {"cell_type": cell_type, "source": cell_source}
+                return Notebook(**nb_dict), {"cell_type": cell_type, "source": cell_source}, source_index, target_index
 
             deleted = notebook.delete_cell(source_index)
             cell_type = deleted.get("cell_type", "code")
@@ -151,7 +171,7 @@ class MoveCellTool(BaseTool):
             if isinstance(cell_source, list):
                 cell_source = "".join(cell_source)
             notebook.insert_cell(target_index, cell_source, cell_type)
-            return Notebook(**notebook.as_dict()), {"cell_type": cell_type, "source": cell_source}
+            return Notebook(**notebook.as_dict()), {"cell_type": cell_type, "source": cell_source}, source_index, target_index
 
     async def execute(
         self,
@@ -163,8 +183,10 @@ class MoveCellTool(BaseTool):
         kernel_spec_manager: Optional[Any] = None,
         notebook_manager: Optional[NotebookManager] = None,
         # Tool-specific parameters
-        source_index: int = None,
-        target_index: int = None,
+        source_index: Optional[int] = None,
+        target_index: Optional[int] = None,
+        source_cell_id: Optional[str] = None,
+        target_cell_id: Optional[str] = None,
         notebook_path: str = "",
         **kwargs,
     ) -> str:
@@ -189,17 +211,20 @@ class MoveCellTool(BaseTool):
                 notebook_path = str(Path(root_dir) / notebook_path)
 
             if serverapp:
-                nb, cell_info = await self._move_cell_ydoc(
-                    serverapp, notebook_path, source_index, target_index
+                nb, cell_info, source_index, target_index = await self._move_cell_ydoc(
+                    serverapp, notebook_path, source_index, target_index,
+                    source_cell_id=source_cell_id, target_cell_id=target_cell_id,
                 )
             else:
-                nb, cell_info = await self._move_cell_file(
-                    notebook_path, source_index, target_index
+                nb, cell_info, source_index, target_index = await self._move_cell_file(
+                    notebook_path, source_index, target_index,
+                    source_cell_id=source_cell_id, target_cell_id=target_cell_id,
                 )
 
         elif mode == ServerMode.MCP_SERVER and notebook_manager is not None:
-            nb, cell_info = await self._move_cell_websocket(
-                notebook_manager, source_index, target_index, notebook_path=notebook_path
+            nb, cell_info, source_index, target_index = await self._move_cell_websocket(
+                notebook_manager, source_index, target_index, notebook_path=notebook_path,
+                source_cell_id=source_cell_id, target_cell_id=target_cell_id,
             )
         else:
             raise ValueError(f"Invalid mode or missing required clients: mode={mode}")

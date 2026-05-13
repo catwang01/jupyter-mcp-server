@@ -730,10 +730,11 @@ Prefer cell_id when available (shown in read_notebook output). Fall back to cell
 @with_hooks("delete_cell")
 async def delete_cell(
     notebook_path: Annotated[str, Field(description="Path to the notebook file, relative to the Jupyter server root")],
-    cell_indices: Annotated[list[int], Field(description="List of cell indices to delete (0-based)", min_items=1)],
+    cell_indices: Annotated[Optional[list[int]], Field(description="List of cell indices to delete (0-based). Required if cell_ids not provided.")] = None,
+    cell_ids: Annotated[Optional[list[str]], Field(description="List of stable cell IDs to delete. Merged with cell_indices if both provided.")] = None,
     include_source: Annotated[bool, Field(description="Whether to include the source of deleted cells")] = True,
 ) -> Annotated[str, Field(description="Success message with list of deleted cells")]:
-    """Delete specific cells from a notebook."""
+    """Delete specific cells from a notebook. Prefer cell_ids when available. Both cell_ids and cell_indices can be provided simultaneously (union)."""
     return await safe_notebook_operation(
         lambda: DeleteCellTool().execute(
             mode=server_context.mode,
@@ -743,6 +744,7 @@ async def delete_cell(
             notebook_manager=notebook_manager,
             notebook_path=notebook_path,
             cell_indices=cell_indices,
+            cell_ids=cell_ids,
             include_source=include_source,
         )
     )
@@ -756,10 +758,12 @@ async def delete_cell(
 )
 async def move_cell(
     notebook_path: Annotated[str, Field(description="Path to the notebook file, relative to the Jupyter server root")],
-    source_index: Annotated[int, Field(description="Index of the cell to move (0-based)", ge=0)],
-    target_index: Annotated[int, Field(description="Destination index (0-based)", ge=0)],
+    source_index: Annotated[Optional[int], Field(description="Index of the cell to move (0-based). Required if source_cell_id not provided.", ge=0)] = None,
+    target_index: Annotated[Optional[int], Field(description="Destination index (0-based). Required if target_cell_id not provided.", ge=0)] = None,
+    source_cell_id: Annotated[Optional[str], Field(description="Stable cell ID of the cell to move.")] = None,
+    target_cell_id: Annotated[Optional[str], Field(description="Stable cell ID of the destination position.")] = None,
 ) -> Annotated[str, Field(description="Success message with moved cell info")]:
-    """Move a cell from source_index to target_index within a notebook."""
+    """Move a cell from one position to another within a notebook. Prefer source_cell_id/target_cell_id when available. Can mix: e.g., source_cell_id + target_index."""
     return await safe_notebook_operation(
         lambda: MoveCellTool().execute(
             mode=server_context.mode,
@@ -770,6 +774,8 @@ async def move_cell(
             notebook_path=notebook_path,
             source_index=source_index,
             target_index=target_index,
+            source_cell_id=source_cell_id,
+            target_cell_id=target_cell_id,
         )
     )
 
