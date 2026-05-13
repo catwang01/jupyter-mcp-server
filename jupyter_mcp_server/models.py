@@ -112,7 +112,7 @@ class Notebook(BaseModel):
             info_list = []
             for idx, cell in enumerate(cells_to_show):
                 absolute_idx = start_index + idx
-                info_list.append(f"=====Cell {absolute_idx} | type: {cell.cell_type} | execution count: {cell.execution_count if cell.execution_count else 'N/A'}=====\n")
+                info_list.append(f"=====Cell {absolute_idx} | id: {cell.id or 'N/A'} | type: {cell.cell_type} | execution count: {cell.execution_count if cell.execution_count else 'N/A'}=====\n")
                 info_list.append(cell.get_source('readable'))
                 info_list.append("\n\n")
 
