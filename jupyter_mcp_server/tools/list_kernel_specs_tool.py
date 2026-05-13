@@ -32,10 +32,12 @@ class ListKernelSpecsTool(BaseTool):
         except Exception as e:
             raise RuntimeError(f"Error listing kernel specs via HTTP: {str(e)}")
 
-    def _list_specs_local(self, kernel_spec_manager: Any) -> List[Dict[str, str]]:
+    async def _list_specs_local(self, kernel_spec_manager: Any) -> List[Dict[str, str]]:
         """List kernel specs using local kernel_spec_manager (JUPYTER_SERVER mode)."""
         try:
-            all_specs = kernel_spec_manager.get_all_specs()
+            all_specs = await kernel_spec_manager.get_all_specs()
+            if all_specs is None:
+                return []
             output = []
             for name, spec_info in all_specs.items():
                 spec = spec_info.get('spec', {})
@@ -68,7 +70,7 @@ class ListKernelSpecsTool(BaseTool):
             Tab-separated table with columns: Name, Display_Name, Language
         """
         if mode == ServerMode.JUPYTER_SERVER and kernel_spec_manager is not None:
-            specs = self._list_specs_local(kernel_spec_manager)
+            specs = await self._list_specs_local(kernel_spec_manager)
         elif mode == ServerMode.MCP_SERVER and server_client is not None:
             specs = self._list_specs_http(server_client)
         else:

@@ -110,13 +110,15 @@ For more details on each tool, their parameters, and return values, please refer
 | :------------------------- | :------------------------------------------------------------------------------- |
 | `read_cell`                | Read the full content (Metadata, Source and Outputs) of a single cell.           |
 | `insert_cell`              | Insert a new code or markdown cell at a specified position.                      |
-| `delete_cell`              | Delete a cell at a specified index.                                              |
+| `delete_cell`              | Delete specific cells from a notebook.                                           |
 | `move_cell`                | Move a cell from one position to another within a notebook.                      |
-| `overwrite_cell_source`    | Overwrite the source code of an existing cell.                                   |
-| `edit_cell_source`         | Apply surgical find-and-replace edits to a cell's source without full rewrite.   |
+| `overwrite_cell_source`    | Replace the entire source of a cell.                                             |
+| `edit_cell_source`         | Surgical find-and-replace within a cell's source.                                |
 | `execute_cell`             | Execute a cell with timeout, supports multimodal output including images.        |
 | `insert_execute_code_cell` | Insert a new code cell and execute it in one step.                               |
 | `execute_code`             | Execute code directly in the kernel, supports magic commands and shell commands. |
+
+> All cell-locating tools support addressing cells by stable `cell_id` (nbformat 4.5) as an alternative to positional `cell_index`. When both are provided, `cell_id` takes priority.
 
 #### JupyterLab Integration
 
