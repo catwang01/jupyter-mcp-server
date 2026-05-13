@@ -507,11 +507,16 @@ async def read_notebook(
 @with_hooks("insert_cell")
 async def insert_cell(
     notebook_path: Annotated[str, Field(description="Path to the notebook file, relative to the Jupyter server root")],
-    cell_index: Annotated[int, Field(description="Target index for insertion (0-based), use -1 to append at end", ge=-1)],
     cell_type: Annotated[Literal["code", "markdown"], Field(description="Type of cell to insert")],
     cell_source: Annotated[str, Field(description="Source content for the cell")],
+    cell_index: Annotated[Optional[int], Field(description="Target index for insertion (0-based), use -1 to append at end. Required if cell_id not provided.", ge=-1)] = None,
+    cell_id: Annotated[Optional[str], Field(description="Stable cell ID (nbformat 4.5+) of the reference cell. Use with insert_position.")] = None,
+    insert_position: Annotated[str, Field(description='Insert "before" or "after" the cell identified by cell_id. Ignored when cell_index is used.')] = "after",
 ) -> Annotated[str, Field(description="Success message and the structure of its surrounding cells")]:
-    """Insert a cell at a specified position in the notebook."""
+    """Insert a cell at a specified position in the notebook.
+
+    Provide either cell_index (integer position) or cell_id + insert_position (stable ID-based insertion).
+    """
     return await safe_notebook_operation(
         lambda: InsertCellTool().execute(
             mode=server_context.mode,
@@ -523,6 +528,8 @@ async def insert_cell(
             cell_index=cell_index,
             cell_source=cell_source,
             cell_type=cell_type,
+            cell_id=cell_id,
+            insert_position=insert_position,
         )
     )
 
@@ -633,12 +640,19 @@ async def execute_cell(
 @with_hooks("insert_execute_code_cell")
 async def insert_execute_code_cell(
     notebook_path: Annotated[str, Field(description="Path to the notebook file, relative to the Jupyter server root")],
-    cell_index: Annotated[int, Field(description="Index at which to insert and execute (0-based)", ge=-1)],
     cell_source: Annotated[str, Field(description="Code source for the cell")],
+    cell_index: Annotated[Optional[int], Field(description="Index at which to insert and execute (0-based). Required if cell_id not provided.", ge=-1)] = None,
+    cell_id: Annotated[Optional[str], Field(description="Stable cell ID. Insert relative to this cell using insert_position.")] = None,
+    insert_position: Annotated[str, Field(description='Insert "before" or "after" the cell identified by cell_id.')] = "after",
     timeout: Annotated[int, Field(description="Maximum seconds to wait for execution")] = 90,
 ) -> Annotated[list[str | ImageContent], Field(description="List of outputs from the executed cell")]:
-    """Insert a code cell and immediately execute it. Requires a kernel attached via attach_kernel."""
-    await safe_notebook_operation(
+    """Insert a code cell and immediately execute it. Requires a kernel attached via attach_kernel.
+
+    Provide either cell_index (integer position) or cell_id + insert_position (stable ID-based insertion).
+    """
+    import re
+
+    insert_result = await safe_notebook_operation(
         lambda: InsertCellTool().execute(
             mode=server_context.mode,
             server_client=server_context.server_client,
@@ -649,8 +663,14 @@ async def insert_execute_code_cell(
             cell_index=cell_index,
             cell_source=cell_source,
             cell_type="code",
+            cell_id=cell_id,
+            insert_position=insert_position,
         )
     )
+
+    # Extract actual insertion index from result string (e.g. "Cell inserted successfully at index 3 ...")
+    match = re.search(r"at index (\d+)", insert_result)
+    actual_index = int(match.group(1)) if match else cell_index
 
     return await safe_notebook_operation(
         lambda: ExecuteCellTool().execute(
@@ -660,7 +680,7 @@ async def insert_execute_code_cell(
             kernel_manager=server_context.kernel_manager,
             notebook_manager=notebook_manager,
             notebook_path=notebook_path,
-            cell_index=cell_index,
+            cell_index=actual_index,
             timeout_seconds=timeout,
             stream=False,
             progress_interval=0,
