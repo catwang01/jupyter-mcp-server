@@ -11,7 +11,7 @@ from typing import Any, Optional
 from jupyter_server_client import JupyterServerClient
 from jupyter_mcp_server.tools._base import BaseTool, ServerMode
 from jupyter_mcp_server.notebook_manager import NotebookManager
-from jupyter_mcp_server.utils import get_notebook_model, clean_notebook_outputs
+from jupyter_mcp_server.utils import get_notebook_model, clean_notebook_outputs, resolve_cell_index
 
 
 class EditCellSourceTool(BaseTool):
@@ -78,10 +78,13 @@ class EditCellSourceTool(BaseTool):
     async def _edit_cell_ydoc(
         self, serverapp: Any, notebook_path: str,
         cell_index: int, old_string: str, new_string: str, replace_all: bool,
+        *, cell_id: str = None,
     ) -> str:
         nb = await get_notebook_model(serverapp, notebook_path)
 
         if nb:
+            cell_index = resolve_cell_index(nb.as_dict()["cells"], cell_id=cell_id, cell_index=cell_index)
+
             if cell_index >= len(nb):
                 raise ValueError(
                     f"Cell index {cell_index} is out of range. Notebook has {len(nb)} cells."
@@ -99,15 +102,19 @@ class EditCellSourceTool(BaseTool):
         else:
             return await self._edit_cell_file(
                 notebook_path, cell_index, old_string, new_string, replace_all,
+                cell_id=cell_id,
             )
 
     async def _edit_cell_file(
         self, notebook_path: str, cell_index: int,
         old_string: str, new_string: str, replace_all: bool,
+        *, cell_id: str = None,
     ) -> str:
         with open(notebook_path, "r", encoding="utf-8") as f:
             notebook = nbformat.read(f, as_version=4)
         clean_notebook_outputs(notebook)
+
+        cell_index = resolve_cell_index(notebook.cells, cell_id=cell_id, cell_index=cell_index)
 
         if cell_index >= len(notebook.cells):
             raise ValueError(
@@ -127,8 +134,11 @@ class EditCellSourceTool(BaseTool):
         self, notebook_manager: NotebookManager, cell_index: int,
         old_string: str, new_string: str, replace_all: bool,
         notebook_path: str = "",
+        cell_id: str = None,
     ) -> str:
         async with notebook_manager.get_notebook_connection(notebook_path) as notebook:
+            cell_index = resolve_cell_index(notebook.as_dict()["cells"], cell_id=cell_id, cell_index=cell_index)
+
             if cell_index >= len(notebook):
                 raise ValueError(f"Cell index {cell_index} out of range")
 
@@ -154,7 +164,8 @@ class EditCellSourceTool(BaseTool):
         kernel_spec_manager: Optional[Any] = None,
         notebook_manager: Optional[NotebookManager] = None,
         # Tool-specific parameters
-        cell_index: int = None,
+        cell_index: Optional[int] = None,
+        cell_id: Optional[str] = None,
         old_string: str = None,
         new_string: str = None,
         replace_all: bool = False,
@@ -181,11 +192,13 @@ class EditCellSourceTool(BaseTool):
                 diff = await self._edit_cell_ydoc(
                     serverapp, notebook_path, cell_index,
                     old_string, new_string, replace_all,
+                    cell_id=cell_id,
                 )
             else:
                 diff = await self._edit_cell_file(
                     notebook_path, cell_index,
                     old_string, new_string, replace_all,
+                    cell_id=cell_id,
                 )
 
         elif mode == ServerMode.MCP_SERVER and notebook_manager is not None:
@@ -193,6 +206,7 @@ class EditCellSourceTool(BaseTool):
                 notebook_manager, cell_index,
                 old_string, new_string, replace_all,
                 notebook_path=notebook_path,
+                cell_id=cell_id,
             )
         else:
             raise ValueError(f"Invalid mode or missing required clients: mode={mode}")

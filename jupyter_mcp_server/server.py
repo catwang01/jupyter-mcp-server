@@ -562,12 +562,13 @@ async def overwrite_cell_source(
 )
 async def edit_cell_source(
     notebook_path: Annotated[str, Field(description="Path to the notebook file, relative to the Jupyter server root")],
-    cell_index: Annotated[int, Field(description="Index of the cell to edit (0-based)", ge=0)],
     old_string: Annotated[str, Field(description="Exact string to find in cell source")],
     new_string: Annotated[str, Field(description="Replacement string")],
+    cell_index: Annotated[Optional[int], Field(description="Index of the cell to edit (0-based). Required if cell_id not provided.", ge=0)] = None,
     replace_all: Annotated[bool, Field(description="Replace all occurrences (default: first only)")] = False,
+    cell_id: Annotated[Optional[str], Field(description="Stable cell ID (nbformat 4.5+). Prefer over cell_index when available.")] = None,
 ) -> Annotated[str, Field(description="Success message with diff showing changes made")]:
-    """Surgical find-and-replace within a cell's source. Prefer over overwrite_cell_source for small edits."""
+    """Surgical find-and-replace within a cell's source. Prefer cell_id over cell_index when available."""
     return await safe_notebook_operation(
         lambda: EditCellSourceTool().execute(
             mode=server_context.mode,
@@ -577,6 +578,7 @@ async def edit_cell_source(
             notebook_manager=notebook_manager,
             notebook_path=notebook_path,
             cell_index=cell_index,
+            cell_id=cell_id,
             old_string=old_string,
             new_string=new_string,
             replace_all=replace_all,
