@@ -161,7 +161,7 @@ class JupyterCitePrompt(BaseTool):
         prompt_list = [f"USER Cite cells {parsed_indices} from notebook {notebook_name}, here are the cells:"]
         for cell_index in parsed_indices:
             cell = notebook.cells[cell_index]
-            prompt_list.append(f"=====Cell {cell_index} | type: {cell.cell_type} | execution count: {cell.execution_count if cell.execution_count else 'N/A'}=====")
+            prompt_list.append(f"=====Cell {cell_index} | id: {cell.id or 'N/A'} | type: {cell.cell_type} | execution count: {cell.execution_count if cell.execution_count else 'N/A'}=====")
             prompt_list.append(cell.get_source('readable'))
         
         prompt_list.append("=====End of Cited Cells=====")
