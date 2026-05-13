@@ -214,7 +214,7 @@ class InsertCellTool(BaseTool):
         kernel_spec_manager: Optional[Any] = None,
         notebook_manager: Optional[NotebookManager] = None,
         # Tool-specific parameters
-        cell_index: int = None,
+        cell_index: Optional[int] = None,
         cell_type: Literal["code", "markdown"] = None,
         cell_source: str = None,
         notebook_path: str = "",
