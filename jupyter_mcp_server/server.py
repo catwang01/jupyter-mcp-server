@@ -511,7 +511,7 @@ async def insert_cell(
     cell_source: Annotated[str, Field(description="Source content for the cell")],
     cell_index: Annotated[Optional[int], Field(description="Target index for insertion (0-based), use -1 to append at end. Required if cell_id not provided.", ge=-1)] = None,
     cell_id: Annotated[Optional[str], Field(description="Stable cell ID (nbformat 4.5+) of the reference cell. Use with insert_position.")] = None,
-    insert_position: Annotated[str, Field(description='Insert "before" or "after" the cell identified by cell_id. Ignored when cell_index is used.')] = "after",
+    insert_position: Annotated[Literal["before", "after"], Field(description='Insert "before" or "after" the cell identified by cell_id. Ignored when cell_index is used.')] = "after",
 ) -> Annotated[str, Field(description="Success message and the structure of its surrounding cells")]:
     """Insert a cell at a specified position in the notebook.
 
@@ -643,7 +643,7 @@ async def insert_execute_code_cell(
     cell_source: Annotated[str, Field(description="Code source for the cell")],
     cell_index: Annotated[Optional[int], Field(description="Index at which to insert and execute (0-based). Required if cell_id not provided.", ge=-1)] = None,
     cell_id: Annotated[Optional[str], Field(description="Stable cell ID. Insert relative to this cell using insert_position.")] = None,
-    insert_position: Annotated[str, Field(description='Insert "before" or "after" the cell identified by cell_id.')] = "after",
+    insert_position: Annotated[Literal["before", "after"], Field(description='Insert "before" or "after" the cell identified by cell_id.')] = "after",
     timeout: Annotated[int, Field(description="Maximum seconds to wait for execution")] = 90,
 ) -> Annotated[list[str | ImageContent], Field(description="List of outputs from the executed cell")]:
     """Insert a code cell and immediately execute it. Requires a kernel attached via attach_kernel.

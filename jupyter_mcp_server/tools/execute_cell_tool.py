@@ -105,7 +105,7 @@ class ExecuteCellTool(BaseTool):
         serverapp=None,
         # Tool-specific parameters
         notebook_path: str = "",
-        cell_index: int = None,
+        cell_index: Optional[int] = None,
         cell_id: Optional[str] = None,
         timeout_seconds: int = 60,
         stream: bool = False,

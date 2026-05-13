@@ -157,8 +157,7 @@ class InsertCellTool(BaseTool):
             cell_index, total_cells, cell_type
         )
 
-        # Create and insert the cell using unified method
-         # Create and insert the cell
+        # Create and insert the cell
         if cell_type == "code":
             new_cell = nbformat.v4.new_code_cell(source=cell_source or "")
         elif cell_type == "markdown":
@@ -220,7 +219,7 @@ class InsertCellTool(BaseTool):
         cell_source: str = None,
         notebook_path: str = "",
         cell_id: Optional[str] = None,
-        insert_position: str = "after",
+        insert_position: Literal["before", "after"] = "after",
         **kwargs
     ) -> str:
         """Execute the insert_cell tool.
