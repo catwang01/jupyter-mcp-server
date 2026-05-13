@@ -95,7 +95,7 @@ class Notebook(BaseModel):
             # Generate TSV table for brief format using get_overview
             from jupyter_mcp_server.utils import format_TSV
 
-            headers = ["Index", "Type", "Count", "First Line"]
+            headers = ["Index", "ID", "Type", "Count", "First Line"]
             rows = []
 
             for idx, cell in enumerate(cells_to_show):
@@ -104,8 +104,8 @@ class Notebook(BaseModel):
                 execution_count = cell.execution_count if cell.execution_count else 'N/A'
                 overview = cell.get_overview()
 
-                rows.append([absolute_idx, cell_type, execution_count, overview])
-            
+                rows.append([absolute_idx, cell.id or "", cell_type, execution_count, overview])
+
             return format_TSV(headers, rows)
 
         elif response_format == "detailed":

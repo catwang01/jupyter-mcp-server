@@ -67,7 +67,7 @@ class ReadCellTool(BaseTool):
         cell = notebook[cell_index]
         info_list = []
         # add cell metadata
-        info_list.append(f"=====Cell {cell_index} | type: {cell.cell_type} | execution count: {cell.execution_count if cell.execution_count else 'N/A'}=====")
+        info_list.append(f"=====Cell {cell_index} | id: {cell.id or 'N/A'} | type: {cell.cell_type} | execution count: {cell.execution_count if cell.execution_count else 'N/A'}=====")
         # add cell source
         info_list.append(cell.get_source('readable'))
         # add cell outputs for code cells
