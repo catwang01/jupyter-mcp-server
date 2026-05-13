@@ -413,6 +413,34 @@ async def safe_notebook_operation(operation_func, max_retries=3):
     raise Exception("Unexpected error in retry logic")
 
 
+def resolve_cell_index(cells, *, cell_id: str = None, cell_index: int = None) -> int:
+    """Resolve cell_id or cell_index to a concrete integer index.
+
+    Priority: cell_id > cell_index.
+    Works with dict-like cells (Y.js, WebSocket) and object cells (nbformat).
+
+    Args:
+        cells: List of cell objects (dicts or objects with id attribute)
+        cell_id: Optional cell ID to search for (takes priority)
+        cell_index: Optional cell index (used if cell_id not provided)
+
+    Returns:
+        Integer index of the cell
+
+    Raises:
+        ValueError: If neither cell_id nor cell_index provided, or if cell_id not found
+    """
+    if cell_id is not None:
+        for i, cell in enumerate(cells):
+            cid = cell.get("id") if hasattr(cell, "get") else getattr(cell, "id", None)
+            if cid == cell_id:
+                return i
+        raise ValueError(f"Cell with id '{cell_id}' not found in notebook")
+    if cell_index is not None:
+        return cell_index
+    raise ValueError("Either cell_id or cell_index must be provided")
+
+
 ###############################################################################
 # Local code execution helpers (JUPYTER_SERVER mode)
 ###############################################################################
