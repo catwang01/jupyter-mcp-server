@@ -6,7 +6,7 @@ import re
 import asyncio
 import time
 import json
-from typing import Any, Union
+from typing import Any, Union, Optional
 from mcp.types import ImageContent
 from jupyter_mcp_server.config import ALLOW_IMG_OUTPUT
 from jupyter_mcp_server.hooks import HookEvent, HookRegistry
@@ -413,7 +413,7 @@ async def safe_notebook_operation(operation_func, max_retries=3):
     raise Exception("Unexpected error in retry logic")
 
 
-def resolve_cell_index(cells, *, cell_id: str = None, cell_index: int = None) -> int:
+def resolve_cell_index(cells, *, cell_id: Optional[str] = None, cell_index: Optional[int] = None) -> int:
     """Resolve cell_id or cell_index to a concrete integer index.
 
     Priority: cell_id > cell_index.
@@ -429,6 +429,8 @@ def resolve_cell_index(cells, *, cell_id: str = None, cell_index: int = None) ->
 
     Raises:
         ValueError: If neither cell_id nor cell_index provided, or if cell_id not found
+
+    Note: cell_index is returned as-is without bounds checking; the caller is responsible for validation.
     """
     if cell_id is not None:
         for i, cell in enumerate(cells):
