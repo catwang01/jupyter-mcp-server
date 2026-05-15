@@ -180,11 +180,11 @@ class ListFilesTool(BaseTool):      # File system exploration
 class ListKernelsTool(BaseTool):    # Kernel management
 
 # Multi-Notebook Management (5 tools)
-class UseNotebookTool(BaseTool):    # Connect/create notebooks
-class ListNotebooksTool(BaseTool):  # List managed notebooks
-class RestartNotebookTool(BaseTool): # Restart kernels
-class UnuseNotebookTool(BaseTool):  # Disconnect notebooks
-class ReadNotebookTool(BaseTool):   # Read notebook content
+class RegisterNotebookTool(BaseTool):   # Connect/create notebooks
+class ListNotebooksTool(BaseTool):      # List managed notebooks
+class RestartNotebookTool(BaseTool):    # Restart kernels
+class UnregisterNotebookTool(BaseTool): # Disconnect notebooks
+class ReadNotebookTool(BaseTool):       # Read notebook content
 
 # Cell Operations (7 tools)
 class InsertCellTool(BaseTool):     # Insert new cells
@@ -260,6 +260,8 @@ class ServerContext:
 - Tracks managed notebooks with kernel associations
 - Supports both local (JUPYTER_SERVER) and remote (MCP_SERVER) modes
 - Provides `NotebookConnection` context manager for Y.js document access
+- **Session-aware**: In JUPYTER_SERVER mode, `register_notebook` reuses existing Jupyter sessions
+  to avoid creating duplicate sessions that disrupt JupyterLab's kernel WebSocket and output rendering
 
 **Local vs Remote**:
 - **Local mode**: Notebooks tracked with `is_local=True`, no WebSocket connections
@@ -482,11 +484,11 @@ jupyter_mcp_server/
 │   ├── list_kernels_tool.py   # Kernel introspection
 │   │
 │   # Multi-Notebook Management Tools (5)
-│   ├── use_notebook_tool.py   # Connect/create notebooks
-│   ├── list_notebooks_tool.py # List managed notebooks
-│   ├── restart_notebook_tool.py # Restart kernels
-│   ├── unuse_notebook_tool.py # Disconnect notebooks
-│   ├── read_notebook_tool.py  # Read notebook content
+│   ├── register_notebook_tool.py   # Connect/create notebooks (session-reuse aware)
+│   ├── list_notebooks_tool.py      # List managed notebooks
+│   ├── restart_notebook_tool.py    # Restart kernels
+│   ├── unregister_notebook_tool.py # Disconnect notebooks
+│   ├── read_notebook_tool.py       # Read notebook content
 │   │
 │   # Cell Operation Tools (7)
 │   ├── read_cell_tool.py      # Read individual cells
@@ -563,5 +565,5 @@ jupyter_mcp_server/
 ---
 
 **Version**: 0.2.0
-**Last Updated**: October 2025
+**Last Updated**: May 2026
 **Status**: Complete implementation with dual-mode architecture and backend abstraction

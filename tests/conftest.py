@@ -235,6 +235,7 @@ def _yield_mcp_url(request, extension_fixture, name_suffix="", otel_file=""):
             port=port,
             command=_mcp_server_command(jupyter_server, port, otel_file=otel_file),
             readiness_endpoint="/api/healthz",
+            max_retries=10,
         )
     else:  # jupyter_extension
         yield request.getfixturevalue(extension_fixture)
@@ -311,6 +312,7 @@ def jupyter_mcp_server(request, jupyter_server):
             "--port", str(port),
         ],
         readiness_endpoint="/api/healthz",
+        max_retries=10,
     )
 
 

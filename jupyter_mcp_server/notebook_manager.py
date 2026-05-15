@@ -9,6 +9,8 @@ This module provides centralized management for Jupyter notebooks and kernels,
 replacing the scattered global variable approach with a unified architecture.
 """
 
+import asyncio
+import logging
 from typing import Dict, Any, Optional, Callable, Union
 from types import TracebackType
 
@@ -16,6 +18,8 @@ from jupyter_nbmodel_client import NbModelClient, get_notebook_websocket_url
 from jupyter_kernel_client import KernelClient
 
 from .config import get_config
+
+logger = logging.getLogger(__name__)
 
 
 class NotebookConnection:
@@ -52,14 +56,20 @@ class NotebookConnection:
         return self._notebook
     
     async def __aexit__(
-        self, 
-        exc_type: Optional[type], 
-        exc_val: Optional[BaseException], 
+        self,
+        exc_type: Optional[type],
+        exc_val: Optional[BaseException],
         exc_tb: Optional[TracebackType]
     ) -> None:
         """Exit context, clean up connection."""
         if self._notebook:
-            await self._notebook.__aexit__(exc_type, exc_val, exc_tb)
+            try:
+                await asyncio.wait_for(
+                    self._notebook.__aexit__(exc_type, exc_val, exc_tb),
+                    timeout=5.0
+                )
+            except (asyncio.TimeoutError, Exception) as e:
+                logger.debug(f"NbModelClient WebSocket close timed out or failed: {e}")
 
 
 class NotebookManager:

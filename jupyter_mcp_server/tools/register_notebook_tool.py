@@ -212,22 +212,53 @@ class RegisterNotebookTool(BaseTool):
                         return f"Kernel '{kernel_id}' not found in local kernel manager."
                     kernel = {"id": kernel_id}
                 else:
-                    kernel = await self._start_kernel_local(kernel_manager)
-                    kernel_id = kernel['id']
+                    # Reuse the existing session's kernel if the notebook is already open.
+                    # Creating a new kernel when a session already exists produces a duplicate
+                    # session, which causes JupyterLab to switch kernels mid-session and breaks
+                    # output rendering for subsequent manual cell executions.
+                    existing_kernel_id = None
+                    if session_manager is not None:
+                        try:
+                            sessions = await session_manager.list_sessions()
+                            for session in sessions:
+                                session_path = session.get('path') or session.get('notebook', {}).get('path', '')
+                                if session_path == notebook_path:
+                                    existing_kernel_id = session.get('kernel', {}).get('id')
+                                    if existing_kernel_id:
+                                        logger.info(f"Reusing existing kernel '{existing_kernel_id}' for notebook '{notebook_path}'")
+                                        break
+                        except Exception as e:
+                            logger.debug(f"Could not list sessions: {e}")
+
+                    if existing_kernel_id:
+                        kernel_id = existing_kernel_id
+                        kernel = {"id": kernel_id}
+                        info_list.append(f"[INFO] Reusing existing kernel '{kernel_id}' (notebook already open).")
+                    else:
+                        kernel = await self._start_kernel_local(kernel_manager)
+                        kernel_id = kernel['id']
 
                 info_list.append(f"[INFO] Connected to kernel '{kernel_id}'.")
-                # Create a Jupyter session to associate the kernel with the notebook
-                # This is CRITICAL for JupyterLab to recognize the kernel-notebook connection
+                # Create a Jupyter session only when no session already exists for this notebook.
+                # Calling create_session when one already exists creates a duplicate session,
+                # which disrupts JupyterLab's kernel WebSocket and causes outputs to stop rendering.
                 if session_manager is not None:
                     try:
-                        # create_session is an async method, so we await it directly
-                        session_dict = await session_manager.create_session(
-                            path=notebook_path,
-                            kernel_id=kernel_id,
-                            type="notebook",
-                            name=notebook_path
+                        sessions = await session_manager.list_sessions()
+                        already_has_session = any(
+                            (s.get('path') or s.get('notebook', {}).get('path', '')) == notebook_path
+                            for s in sessions
                         )
-                        logger.info(f"Created Jupyter session '{session_dict.get('id')}' for notebook '{notebook_path}' with kernel '{kernel_id}'")
+                        if not already_has_session:
+                            session_dict = await session_manager.create_session(
+                                path=notebook_path,
+                                kernel_id=kernel_id,
+                                type="notebook",
+                                name=notebook_path
+                            )
+                            logger.info(f"Created Jupyter session '{session_dict.get('id')}' for notebook '{notebook_path}' with kernel '{kernel_id}'")
+                        else:
+                            logger.info(f"Session already exists for '{notebook_path}', skipping creation")
                     except Exception as e:
                         logger.warning(f"Failed to create Jupyter session: {e}. Notebook may not be properly connected in JupyterLab UI.")
                 else:
