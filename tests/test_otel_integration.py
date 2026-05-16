@@ -69,7 +69,7 @@ async def test_tool_call_spans_emitted(mcp_client_otel: MCPClient, otel_spans_fi
 async def test_execution_spans_emitted(mcp_client_otel: MCPClient, otel_spans_file: str):
     """Code execution must emit BEFORE_EXECUTE/AFTER_EXECUTE spans."""
     async with mcp_client_otel:
-        result = await mcp_client_otel.insert_execute_code_cell(1, "40 + 2")
+        result = await mcp_client_otel.insert_execute_code_cell("notebook.ipynb", 1, "40 + 2")
         assert result is not None
         # Clean up
         await mcp_client_otel.delete_cell([1])
@@ -90,13 +90,18 @@ async def test_execution_spans_emitted(mcp_client_otel: MCPClient, otel_spans_fi
 @pytest.mark.asyncio
 @timeout_wrapper(90)
 async def test_lifecycle_spans_emitted(mcp_client_otel: MCPClient, otel_spans_file: str):
-    """register_notebook triggers a KERNEL_LIFECYCLE span."""
+    """Creating and deleting a kernel triggers kernel_lifecycle spans."""
     async with mcp_client_otel:
-        result = await mcp_client_otel.register_notebook("otel_test_nb", "notebook.ipynb")
-        logging.info(f"register_notebook result: {result}")
-
-        # Clean up
-        await mcp_client_otel.unregister_notebook("otel_test_nb")
+        # Create then immediately delete a kernel to trigger the lifecycle span
+        kernel_text = await mcp_client_otel.create_kernel()
+        assert kernel_text is not None
+        kernel_id = None
+        for line in kernel_text.split("\n"):
+            if line.startswith("ID: "):
+                kernel_id = line[4:].strip()
+                break
+        assert kernel_id, f"Could not parse kernel ID from: {kernel_text}"
+        await mcp_client_otel.delete_kernel(kernel_id)
 
     spans = _read_spans(otel_spans_file)
     lifecycle_spans = [s for s in spans if s["name"] == "kernel_lifecycle"]
@@ -106,7 +111,7 @@ async def test_lifecycle_spans_emitted(mcp_client_otel: MCPClient, otel_spans_fi
         f"Expected at least 1 lifecycle span, got {len(lifecycle_spans)}"
     )
     event_types = {s["attributes"]["event_type"] for s in lifecycle_spans}
-    assert "started" in event_types, f"Expected 'started' lifecycle event, got {event_types}"
+    assert "stopped" in event_types, f"Expected 'stopped' lifecycle event, got {event_types}"
 
 
 @pytest.mark.asyncio

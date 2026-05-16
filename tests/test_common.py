@@ -105,6 +105,21 @@ class MCPClient:
         self._session: ClientSession | None = None
         self._exit_stack = AsyncExitStack()
         self._http_client = None
+        self._auto_kernel_id = None
+
+    _DEFAULT_NOTEBOOK = "notebook.ipynb"
+
+    @staticmethod
+    def _split_notebook_path(first_arg, *rest):
+        """Detect whether first_arg is a notebook_path (str) or a cell index (int/list).
+
+        Returns (notebook_path, remaining_args) so callers can support both:
+          method(notebook_path, cell_index, ...) — explicit notebook
+          method(cell_index, ...)               — uses _DEFAULT_NOTEBOOK
+        """
+        if isinstance(first_arg, str):
+            return first_arg, rest
+        return MCPClient._DEFAULT_NOTEBOOK, (first_arg,) + rest
 
     async def __aenter__(self):
         """Initiate the session (enter session context)"""
@@ -123,10 +138,39 @@ class MCPClient:
         session_context = ClientSession(read_stream, write_stream)
         self._session = await self._exit_stack.enter_async_context(session_context)
         await self._session.initialize()
+
+        # In JUPYTER_SERVER mode no kernel is pre-attached; auto-create one so
+        # execute_cell works without explicit setup in each individual test.
+        self._auto_kernel_id = None
+        try:
+            notebooks_text = await self.list_notebooks()
+            already_attached = bool(notebooks_text and self._DEFAULT_NOTEBOOK in notebooks_text)
+            if not already_attached:
+                tools_result = await self._session.list_tools()  # type: ignore
+                tool_names = [t.name for t in tools_result.tools]
+                if "create_kernel" in tool_names:
+                    kernel_text = await self.create_kernel()
+                    if kernel_text:
+                        for line in kernel_text.split("\n"):
+                            if line.startswith("ID: "):
+                                self._auto_kernel_id = line[4:].strip()
+                                break
+                    if self._auto_kernel_id:
+                        await self.attach_kernel(self._DEFAULT_NOTEBOOK, self._auto_kernel_id)
+        except Exception:
+            self._auto_kernel_id = None
+
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         """Close the session (exit session context)"""
+        if self._auto_kernel_id:
+            try:
+                await self.detach_kernel(self._DEFAULT_NOTEBOOK)
+                await self.delete_kernel(self._auto_kernel_id)
+            except Exception:
+                pass
+            self._auto_kernel_id = None
         if self._exit_stack:
             await self._exit_stack.aclose()
         if self._http_client:
@@ -381,7 +425,11 @@ class MCPClient:
     # -------------------------------------------------------------------------
 
     @requires_session
-    async def insert_cell(self, notebook_path, cell_index, cell_type, cell_source):
+    async def insert_cell(self, notebook_path_or_index, cell_index_or_type=None, cell_type_or_source=None, cell_source=None):
+        if isinstance(notebook_path_or_index, str):
+            notebook_path, cell_index, cell_type = notebook_path_or_index, cell_index_or_type, cell_type_or_source
+        else:
+            notebook_path, cell_index, cell_type, cell_source = self._DEFAULT_NOTEBOOK, notebook_path_or_index, cell_index_or_type, cell_type_or_source
         result = await self._call_tool_safe("insert_cell", {
             "notebook_path": notebook_path,
             "cell_index": cell_index,
@@ -409,7 +457,13 @@ class MCPClient:
         return structured
 
     @requires_session
-    async def read_cell(self, notebook_path, cell_index, include_outputs=True):
+    async def read_cell(self, notebook_path_or_index, cell_index_or_outputs=None, include_outputs=True):
+        if isinstance(notebook_path_or_index, str):
+            notebook_path, cell_index = notebook_path_or_index, cell_index_or_outputs
+        else:
+            notebook_path, cell_index = self._DEFAULT_NOTEBOOK, notebook_path_or_index
+            if isinstance(cell_index_or_outputs, bool):
+                include_outputs = cell_index_or_outputs
         result = await self._call_tool_safe("read_cell", {
             "notebook_path": notebook_path,
             "cell_index": cell_index,
@@ -418,7 +472,12 @@ class MCPClient:
         return self._get_structured_content_safe(result) if result else None
 
     @requires_session
-    async def move_cell(self, notebook_path, source_index: int, target_index: int):
+    async def move_cell(self, notebook_path_or_src, source_or_target=None, target_index=None):
+        if isinstance(notebook_path_or_src, str):
+            notebook_path, source_index, target_index = notebook_path_or_src, source_or_target, target_index
+        else:
+            notebook_path, source_index = self._DEFAULT_NOTEBOOK, notebook_path_or_src
+            target_index = source_or_target
         result = await self._call_tool_safe("move_cell", {
             "notebook_path": notebook_path,
             "source_index": source_index,
@@ -427,16 +486,24 @@ class MCPClient:
         return self._get_structured_content_safe(result) if result else None
 
     @requires_session
-    async def delete_cell(self, notebook_path, cell_indices: list[int], include_source: bool = True):
+    async def delete_cell(self, notebook_path_or_indices, cell_indices=None, include_source: bool = True):
+        if isinstance(notebook_path_or_indices, str):
+            notebook_path, indices = notebook_path_or_indices, cell_indices
+        else:
+            notebook_path, indices = self._DEFAULT_NOTEBOOK, notebook_path_or_indices
         result = await self._call_tool_safe("delete_cell", {
             "notebook_path": notebook_path,
-            "cell_indices": cell_indices,
+            "cell_indices": indices,
             "include_source": include_source,
         })
         return self._get_structured_content_safe(result) if result else None
 
     @requires_session
-    async def execute_cell(self, notebook_path, cell_index, timeout_seconds=300, stream=False, progress_interval=5):
+    async def execute_cell(self, notebook_path_or_index, cell_index=None, timeout_seconds=300, stream=False, progress_interval=5):
+        if isinstance(notebook_path_or_index, str):
+            notebook_path, cell_index = notebook_path_or_index, cell_index
+        else:
+            notebook_path, cell_index = self._DEFAULT_NOTEBOOK, notebook_path_or_index
         result = await self._call_tool_safe("execute_cell", {
             "notebook_path": notebook_path,
             "cell_index": cell_index,
@@ -462,7 +529,11 @@ class MCPClient:
         return self._get_structured_content_safe(result) if result else None
 
     @requires_session
-    async def edit_cell_source(self, notebook_path, cell_index, old_string, new_string, replace_all=False):
+    async def edit_cell_source(self, notebook_path_or_index, cell_index_or_old=None, old_or_new=None, new_string=None, replace_all=False):
+        if isinstance(notebook_path_or_index, str):
+            notebook_path, cell_index, old_string, new_string = notebook_path_or_index, cell_index_or_old, old_or_new, new_string
+        else:
+            notebook_path, cell_index, old_string, new_string = self._DEFAULT_NOTEBOOK, notebook_path_or_index, cell_index_or_old, old_or_new
         result = await self._call_tool_safe("edit_cell_source", {
             "notebook_path": notebook_path,
             "cell_index": cell_index,
