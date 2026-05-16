@@ -9,12 +9,16 @@ Notebooks (files) and Kernels (processes) are managed independently.
 Use attach_kernel / detach_kernel to associate them explicitly.
 """
 
+import asyncio
+import logging
 from typing import Dict, Any, Optional, List
 from types import TracebackType
 
 from jupyter_nbmodel_client import NbModelClient, get_notebook_websocket_url
 
 from .config import get_config
+
+logger = logging.getLogger(__name__)
 
 
 class NotebookConnection:
@@ -45,7 +49,13 @@ class NotebookConnection:
         exc_tb: Optional[TracebackType],
     ) -> None:
         if self._notebook:
-            await self._notebook.__aexit__(exc_type, exc_val, exc_tb)
+            try:
+                await asyncio.wait_for(
+                    self._notebook.__aexit__(exc_type, exc_val, exc_tb),
+                    timeout=5.0
+                )
+            except (asyncio.TimeoutError, Exception) as e:
+                logger.debug(f"NbModelClient WebSocket close timed out or failed: {e}")
 
 
 class NotebookManager:
