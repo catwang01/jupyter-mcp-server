@@ -310,7 +310,7 @@ async def list_kernel_specs() -> Annotated[str, Field(description="Tab-separated
     ),
 )
 @with_hooks("create_kernel")
-async def create_kernel_tool(
+async def create_kernel(
     kernel_name: Annotated[Optional[str], Field(description="Kernel spec name (e.g. 'python3', 'ir'). Uses server default if not specified.")] = None,
 ) -> Annotated[str, Field(description="Kernel ID and name")]:
     """Create a new standalone kernel.

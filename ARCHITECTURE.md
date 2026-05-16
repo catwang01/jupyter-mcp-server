@@ -282,6 +282,14 @@ All listing tools (`list_kernels`, `list_kernel_specs`, `list_notebooks`, `list_
 
 When a listing tool has no results, it returns a human-readable message (e.g., "No kernels found on the Jupyter server.") instead of an empty table.
 
+**Error Output Format**:
+
+Execution tools return errors as `[ERROR: TypeName: message]` strings (not exceptions). The format always includes the exception class name so that errors like `KeyError` (whose `str()` omits the class name) remain diagnosable. Pattern:
+```python
+return [f"[ERROR: {type(e).__name__}: {e}]"]
+```
+This applies to all `except Exception as e` handlers in `utils.py` (`execute_via_execution_stack`, `execute_code_local`, `execute_cell_local`) and in tool files (`execute_code_tool.py`, `execute_cell_tool.py`).
+
 **Dynamic Tool Registry** (`get_registered_tools()`):
 - Queries FastMCP's `list_tools()` to get all registered tools
 - Returns tool metadata (name, description, parameters, inputSchema)
@@ -649,6 +657,43 @@ jupyter_mcp_server/
     └── protocol/              # Protocol implementation
         └── messages.py        # MCP message models
 ```
+
+## Known Issues (JUPYTER_SERVER Mode + JRK Remote Kernels)
+
+When using JRK (jupyter-remote-kernel) via GatewayClient, a chain of failures can produce opaque `[ERROR: AssertionError: ]` responses:
+
+**Error Chain:**
+```
+JRK remote kernel WebSocket disconnect
+  → GatewayKernelClient._route_responses() thread exits
+  → channel_queue.response_router_finished = True
+  → iopub_channel.get_msg() raises RuntimeError("Response router had finished")
+  → jupyter_remote_kernel converts to TimeoutError("Timeout waiting for kernel output")
+  → jupyter_server_nbmodel kernel_worker: except BaseException catches TimeoutError
+    → Logs "Failed to process execution request" but does NOT set results[uid]
+  → execute_via_execution_stack polling loop sees NO_RESULT until our own timeout fires
+```
+
+**Bug 1: Missing `await` on `execution_stack.cancel()`** (`utils.py:588`):
+```python
+# Current (broken): coroutine created but never awaited → no cleanup
+execution_stack.cancel(kernel_id)
+# Should be:
+await execution_stack.cancel(kernel_id)
+```
+Without cleanup, `__workers`/`__kernel_clients` retain the dead worker and broken WebSocket. Subsequent `put()` calls reuse the dead state.
+
+**Bug 2: `kernel_worker` silent result loss** (upstream `jupyter_server_nbmodel/actions.py:291`):
+```python
+except (asyncio.CancelledError, KeyboardInterrupt, RuntimeError) as e:
+    results[uid] = {"error": str(e)}  # Only RuntimeError sets result
+    break
+except BaseException as e:  # TimeoutError lands here
+    logger.error(...)        # Logged but results[uid] never set → NO_RESULT forever
+```
+
+**Bug 3: `AssertionError` from stale GatewayKernelClient** (upstream `jupyter_server/gateway/managers.py`):
+After the response router finishes, if `stop_channels()` is called on a client whose `channel_socket` was never initialized (or set to None), bare `assert self.channel_socket is not None` fires with no message → `[ERROR: AssertionError: ]`.
 
 ## References
 

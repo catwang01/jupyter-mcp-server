@@ -26,7 +26,7 @@ import pytest
 import requests
 
 from .test_common import MCPClient, JUPYTER_TOOLS, timeout_wrapper
-from .conftest import JUPYTER_TOKEN, TEST_MCP_SERVER
+from .conftest import JUPYTER_TOKEN, TEST_MCP_SERVER, GATEWAY_KERNEL_SPEC, TEST_JUPYTER_SERVER
 
 
 # Default notebook present in the dev/content directory used by tests
@@ -533,6 +533,72 @@ async def test_execute_code(mcp_client_parametrized: MCPClient):
             kernel_id, "import time\ntime.sleep(5)", timeout=2
         )
         assert "TIMEOUT ERROR" in result["result"][0]
+
+
+def _parse_kernel_id_from_create_result(create_result: str) -> str:
+    """Extract kernel ID from create_kernel tool output ('ID: <uuid>' line)."""
+    for line in create_result.splitlines():
+        if line.startswith("ID: "):
+            return line[4:].strip()
+    raise ValueError(f"Could not parse kernel_id from: {create_result!r}")
+
+
+@pytest.mark.asyncio
+@timeout_wrapper(90)
+async def test_execute_code_jupyter_server_local_kernel(mcp_client_jupyter_server_only: MCPClient):
+    """Integration test: execute_code creates a fresh local kernel in JUPYTER_SERVER mode.
+
+    Covers the _execute_via_kernel_manager path (execute_via_execution_stack) with a
+    locally-managed python3 kernel, verifying basic output, magic commands, and shell.
+    """
+    async with mcp_client_jupyter_server_only:
+        create_result = await mcp_client_jupyter_server_only.create_kernel("python3")
+        kernel_id = _parse_kernel_id_from_create_result(create_result)
+        logging.info(f"Created local kernel: {kernel_id}")
+
+        try:
+            result = await mcp_client_jupyter_server_only.execute_code(kernel_id, "print('local kernel ok')")
+            assert "local kernel ok" in result["result"][0]
+
+            result = await mcp_client_jupyter_server_only.execute_code(kernel_id, "x = 123; x")
+            assert "123" in str(result["result"][0])
+
+            result = await mcp_client_jupyter_server_only.execute_code(kernel_id, "%who")
+            assert "x" in result["result"][0]
+        finally:
+            await mcp_client_jupyter_server_only.delete_kernel(kernel_id)
+
+
+@pytest.mark.asyncio
+@timeout_wrapper(120)
+async def test_execute_code_gateway_kernel(mcp_client_gateway: MCPClient):
+    """Integration test: execute_code with a real gateway kernel (JRK/remote).
+
+    Regression test for the AssertionError bug where execute_code_local directly
+    accessed client.iopub_channel.socket (ZMQ), failing on gateway kernels that
+    use ChannelQueue (WebSocket-backed) with no .socket attribute.
+
+    Requires env vars:
+        JUPYTER_GATEWAY_URL   e.g. http://localhost:8888/jupyter/jrk
+        GATEWAY_KERNEL_SPEC   e.g. localmac:python3
+    """
+    async with mcp_client_gateway:
+        create_result = await mcp_client_gateway.create_kernel(GATEWAY_KERNEL_SPEC)
+        kernel_id = _parse_kernel_id_from_create_result(create_result)
+        logging.info(f"Created gateway kernel: {kernel_id} ({GATEWAY_KERNEL_SPEC})")
+
+        try:
+            result = await mcp_client_gateway.execute_code(kernel_id, "print('gateway kernel ok')")
+            assert "gateway kernel ok" in result["result"][0], \
+                f"Expected output, got: {result['result']}"
+
+            result = await mcp_client_gateway.execute_code(kernel_id, "2 ** 10")
+            assert "1024" in str(result["result"][0])
+
+            result = await mcp_client_gateway.execute_code(kernel_id, "%who")
+            assert result["result"] is not None
+        finally:
+            await mcp_client_gateway.delete_kernel(kernel_id)
 
 
 @pytest.mark.asyncio

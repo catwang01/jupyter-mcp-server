@@ -25,9 +25,19 @@ import pytest
 import pytest_asyncio
 import requests
 from requests.exceptions import ConnectionError
+from typing import Optional
 
 
 JUPYTER_TOKEN = "MY_TOKEN"
+
+# Gateway kernel integration test configuration.
+# Set these env vars to enable gateway kernel tests:
+#   JUPYTER_GATEWAY_URL    e.g. http://localhost:8888/jupyter/jrk
+#   JUPYTER_GATEWAY_TOKEN  (defaults to JUPYTER_TOKEN if not set)
+#   GATEWAY_KERNEL_SPEC    e.g. localmac:python3
+JUPYTER_GATEWAY_URL = os.environ.get("JUPYTER_GATEWAY_URL", "")
+JUPYTER_GATEWAY_TOKEN = os.environ.get("JUPYTER_GATEWAY_TOKEN", JUPYTER_TOKEN)
+GATEWAY_KERNEL_SPEC = os.environ.get("GATEWAY_KERNEL_SPEC", "")
 
 
 def _find_free_port():
@@ -45,8 +55,8 @@ TEST_JUPYTER_SERVER = os.environ.get("TEST_JUPYTER_SERVER", "true").lower() == "
 
 def _start_server(
     name: str, host: str, port: int, command: list, readiness_endpoint: str,
-    max_retries: int = 5, extra_env: dict | None = None,
-    stderr_file: str | None = None,
+    max_retries: int = 5, extra_env: Optional[dict] = None,
+    stderr_file: Optional[str] = None,
 ):
     """A Helper that starts a web server as a python subprocess and wait until it's ready to accept connections
 
@@ -418,3 +428,66 @@ def mcp_client_otel(mcp_server_url_otel):
     """MCPClient talking to an OTel-enabled server (both modes)."""
     from .test_common import MCPClient
     return MCPClient(mcp_server_url_otel, token=JUPYTER_TOKEN)
+
+
+###############################################################################
+# Gateway kernel fixtures
+#
+# These fixtures start a JupyterLab instance configured with GatewayClient,
+# allowing integration tests against real gateway kernels (e.g. JRK agents).
+#
+# Required env vars:
+#   JUPYTER_GATEWAY_URL   URL of the running JRK hub
+#   GATEWAY_KERNEL_SPEC   Kernel spec name (e.g. localmac:python3)
+###############################################################################
+
+
+@pytest.fixture(scope="session")
+def jupyter_server_with_gateway():
+    """Start JupyterLab with GatewayClient configured.
+
+    Skipped unless JUPYTER_GATEWAY_URL and GATEWAY_KERNEL_SPEC are both set.
+    """
+    if not JUPYTER_GATEWAY_URL or not GATEWAY_KERNEL_SPEC:
+        pytest.skip("Set JUPYTER_GATEWAY_URL and GATEWAY_KERNEL_SPEC to run gateway tests")
+
+    host = "localhost"
+    port = _find_free_port()
+    yield from _start_server(
+        name="JupyterLab+Gateway",
+        host=host,
+        port=port,
+        command=[
+            "jupyter", "lab",
+            "--port", str(port),
+            "--IdentityProvider.token", JUPYTER_TOKEN,
+            "--ip", host,
+            "--ServerApp.root_dir", "./dev/content",
+            "--no-browser",
+            "--ServerApp.jpserver_extensions", '{"jupyter_mcp_server": True}',
+            f"--GatewayClient.url={JUPYTER_GATEWAY_URL}",
+            f"--GatewayClient.auth_token={JUPYTER_GATEWAY_TOKEN}",
+        ],
+        readiness_endpoint="/api",
+        max_retries=10,
+    )
+
+
+@pytest.fixture(scope="function")
+def mcp_client_gateway(jupyter_server_with_gateway):
+    """MCPClient connected to a JupyterLab with GatewayClient configured."""
+    from .test_common import MCPClient
+    return MCPClient(jupyter_server_with_gateway, token=JUPYTER_TOKEN)
+
+
+@pytest.fixture(scope="function")
+def mcp_client_jupyter_server_only(jupyter_server_with_extension):
+    """MCPClient for JUPYTER_SERVER mode only (no MCP_SERVER mode).
+
+    Use for tests that require JUPYTER_SERVER-specific tools (create_kernel,
+    execute_code via ExecutionStack, etc.) not available in standalone MCP_SERVER mode.
+    """
+    if not TEST_JUPYTER_SERVER:
+        pytest.skip("TEST_JUPYTER_SERVER is disabled")
+    from .test_common import MCPClient
+    return MCPClient(jupyter_server_with_extension, token=JUPYTER_TOKEN)

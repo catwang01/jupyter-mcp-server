@@ -29,20 +29,17 @@ class ExecuteCodeTool(BaseTool):
         safe_extract_outputs_fn
     ) -> list[Union[str, ImageContent]]:
         """Execute code using kernel_manager (JUPYTER_SERVER mode).
-        
-        Uses execute_code_local which handles ZMQ message collection properly.
+
+        Uses ExecutionStack (same path as execute_cell) to support gateway kernels.
         """
-        from jupyter_mcp_server.utils import execute_code_local
-        
-        # Get serverapp from kernel_manager
+        from jupyter_mcp_server.utils import execute_via_execution_stack
+
         serverapp = kernel_manager.parent
-        
-        # Use centralized execute_code_local function
-        return await execute_code_local(
+
+        return await execute_via_execution_stack(
             serverapp=serverapp,
-            notebook_path="",  # Not needed for execute_code
-            code=code,
             kernel_id=kernel_id,
+            code=code,
             timeout=timeout,
             logger=logger
         )
