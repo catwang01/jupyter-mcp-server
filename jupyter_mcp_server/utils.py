@@ -233,13 +233,16 @@ def format_TSV(headers: list[str], rows: list[list[str]]) -> str:
     Returns:
         The formatted TSV string
     """
-    if not headers or not rows:
+    if not headers:
         return "No data to display"
-    
+
     result = []
-    
+
     header_row = "\t".join(headers)
     result.append(header_row)
+
+    if not rows:
+        return "\n".join(result)
     
     for row in rows:
         data_row = "\t".join(str(cell) for cell in row)

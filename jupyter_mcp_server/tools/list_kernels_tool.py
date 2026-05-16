@@ -4,6 +4,7 @@
 
 """List all available kernels tool."""
 
+import inspect
 from typing import Any, Optional, List, Dict
 from jupyter_server_client import JupyterServerClient
 
@@ -88,17 +89,20 @@ class ListKernelsTool(BaseTool):
     ) -> List[Dict[str, str]]:
         """List kernels using local kernel_manager API (JUPYTER_SERVER mode)."""
         try:
-            # Get all running kernels - list_kernels() is async on GatewayMappingKernelManager
-            kernel_infos = list(await kernel_manager.list_kernels())
+            # list_kernels() is async on GatewayMappingKernelManager but sync on local manager
+            _kernels_result = kernel_manager.list_kernels()
+            if inspect.isawaitable(_kernels_result):
+                _kernels_result = await _kernels_result
+            kernel_infos = list(_kernels_result)
 
             if not kernel_infos:
                 return []
 
-            # Get kernel specifications (get_all_specs is async on GatewayKernelSpecManager)
-            kernel_specs = (await kernel_spec_manager.get_all_specs()) if kernel_spec_manager else {}
-            if kernel_specs is None:
-                kernel_specs = {}
-
+            # get_all_specs is async on GatewayKernelSpecManager but sync on local manager
+            _specs_result = kernel_spec_manager.get_all_specs() if kernel_spec_manager else {}
+            if inspect.isawaitable(_specs_result):
+                _specs_result = await _specs_result
+            kernel_specs = _specs_result or {}
             # Create enhanced kernel information list
             output = []
             for kernel_info_dict in kernel_infos:
@@ -177,7 +181,8 @@ class ListKernelsTool(BaseTool):
             raise ValueError(f"Invalid mode or missing required managers/clients: mode={mode}")
 
         if not kernel_list:
-            return "No kernels found on the Jupyter server."
+            headers = ["ID", "Name", "Display_Name", "Language", "State", "Connections", "Last_Activity", "Environment"]
+            return format_TSV(headers, [])
 
         try:
             # Create TSV formatted output

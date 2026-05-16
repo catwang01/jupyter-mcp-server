@@ -70,8 +70,8 @@ def timeout_wrapper(timeout_seconds=30):
             except asyncio.TimeoutError:
                 pytest.skip(f"Test {func.__name__} timed out ({timeout_seconds}s) - known platform limitation")
             except Exception as e:
-                # Check if it's a network timeout related to Windows
-                if "ReadTimeout" in str(e) or "TimeoutError" in str(e):
+                # Check if it's a network timeout related to Windows (not an assertion failure)
+                if not isinstance(e, AssertionError) and ("ReadTimeout" in str(e) or "TimeoutError" in str(e)):
                     pytest.skip(f"Test {func.__name__} hit network timeout - known platform limitation: {e}")
                 raise
         return wrapper
@@ -364,13 +364,17 @@ class MCPClient:
 
     @requires_session
     async def read_notebook(self, notebook_path, response_format="brief", start_index=0, limit=20):
-        result = await self._session.call_tool("read_notebook", arguments={
-            "notebook_path": notebook_path,
-            "response_format": response_format,
-            "start_index": start_index,
-            "limit": limit,
-        })  # type: ignore
-        return self._extract_text_content(result)
+        try:
+            result = await self._session.call_tool("read_notebook", arguments={
+                "notebook_path": notebook_path,
+                "response_format": response_format,
+                "start_index": start_index,
+                "limit": limit,
+            })  # type: ignore
+            return self._extract_text_content(result)
+        except Exception as e:
+            logging.warning(f"Tool read_notebook raised error: {e}")
+            return None
 
     # -------------------------------------------------------------------------
     # Cell Tool Methods  (all require notebook_path)

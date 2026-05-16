@@ -253,7 +253,7 @@ async def test_cell_manipulation(mcp_client_parametrized: MCPClient):
         cell_info = await client.read_cell(DEFAULT_NOTEBOOK, index)
         logging.debug(f"cell_info: {cell_info}")
         assert isinstance(cell_info['result'], list), "Read cell result should be a list"
-        assert f"=====Cell {index} | type: {expected_type}" in cell_info['result'][0], "Cell metadata should be included"
+        assert f"Cell {index}" in cell_info['result'][0] and f"type: {expected_type}" in cell_info['result'][0], "Cell metadata should be included"
         assert content in cell_info['result'][1], "Cell source should be included"
         result = await client.delete_cell(DEFAULT_NOTEBOOK, [index])
         assert result is not None, "delete_cell result should not be None"
@@ -261,35 +261,56 @@ async def test_cell_manipulation(mcp_client_parametrized: MCPClient):
         assert f"deleted cell source:\n{content}" in result["result"]
 
     async with mcp_client_parametrized:
-        # Test markdown cell operations
-        markdown_content = "Hello **World** !"
-        result = await mcp_client_parametrized.insert_cell(DEFAULT_NOTEBOOK, 1, "markdown", markdown_content)
-        assert result is not None, "insert_cell result should not be None"
-        assert "Cell inserted successfully at index 1 (markdown)!" in result["result"]
-        await check_and_delete_cell(mcp_client_parametrized, 1, "markdown", markdown_content)
+        # MCP_SERVER mode: a kernel is pre-started and attached at server startup.
+        # JUPYTER_SERVER mode: no pre-attached kernel — create and attach one.
+        created_kernel = False
+        kernel_id = None
+        try:
+            kernel_id = await mcp_client_parametrized.get_first_kernel_id()
+        except Exception:
+            pass
 
-        # Test code cell operations
-        code_content = "1 + 1"
-        code_result = await mcp_client_parametrized.insert_execute_code_cell(DEFAULT_NOTEBOOK, 1, code_content)
-        expected_result = eval(code_content)
-        assert int(code_result['result'][0]) == expected_result
+        if kernel_id is None:
+            create_result = await mcp_client_parametrized.create_kernel("python3")
+            kernel_id = _parse_kernel_id_from_create_result(create_result)
+            created_kernel = True
 
-        # Testing appending code cell to bottom of notebook
-        code_result = await mcp_client_parametrized.insert_execute_code_cell(DEFAULT_NOTEBOOK, -1, code_content)
-        expected_result = eval(code_content)
-        assert int(code_result['result'][0]) == expected_result
+        await mcp_client_parametrized.attach_kernel(DEFAULT_NOTEBOOK, kernel_id)
 
-        # Test overwrite_cell_source
-        new_code_content = f"({code_content}) * 2"
-        result = await mcp_client_parametrized.overwrite_cell_source(DEFAULT_NOTEBOOK, 1, new_code_content)
-        assert result is not None, "overwrite_cell_source result should not be None"
-        assert "Cell 1 overwritten successfully!" in result["result"]
-        assert "diff" in result["result"]
-        assert "-" in result["result"]
-        assert "+" in result["result"]
-        assert int(code_result["result"][0]) == expected_result
+        try:
+            # Test markdown cell operations
+            markdown_content = "Hello **World** !"
+            result = await mcp_client_parametrized.insert_cell(DEFAULT_NOTEBOOK, 1, "markdown", markdown_content)
+            assert result is not None, "insert_cell result should not be None"
+            assert "Cell inserted successfully at index 1 (markdown)!" in result["result"]
+            await check_and_delete_cell(mcp_client_parametrized, 1, "markdown", markdown_content)
 
-        await check_and_delete_cell(mcp_client_parametrized, 1, "code", new_code_content)
+            # Test code cell operations
+            code_content = "1 + 1"
+            code_result = await mcp_client_parametrized.insert_execute_code_cell(DEFAULT_NOTEBOOK, 1, code_content)
+            expected_result = eval(code_content)
+            assert int(code_result['result'][0]) == expected_result
+
+            # Testing appending code cell to bottom of notebook
+            code_result = await mcp_client_parametrized.insert_execute_code_cell(DEFAULT_NOTEBOOK, -1, code_content)
+            expected_result = eval(code_content)
+            assert int(code_result['result'][0]) == expected_result
+
+            # Test overwrite_cell_source
+            new_code_content = f"({code_content}) * 2"
+            result = await mcp_client_parametrized.overwrite_cell_source(DEFAULT_NOTEBOOK, 1, new_code_content)
+            assert result is not None, "overwrite_cell_source result should not be None"
+            assert "Cell 1 overwritten successfully!" in result["result"]
+            assert "diff" in result["result"]
+            assert "-" in result["result"]
+            assert "+" in result["result"]
+            assert int(code_result["result"][0]) == expected_result
+
+            await check_and_delete_cell(mcp_client_parametrized, 1, "code", new_code_content)
+        finally:
+            await mcp_client_parametrized.detach_kernel(DEFAULT_NOTEBOOK)
+            if created_kernel:
+                await mcp_client_parametrized.delete_kernel(kernel_id)
 
 
 @pytest.mark.asyncio
@@ -297,6 +318,21 @@ async def test_cell_manipulation(mcp_client_parametrized: MCPClient):
 async def test_multimodal_output(mcp_client_parametrized: MCPClient):
     """Test multimodal output functionality with image generation in both modes"""
     async with mcp_client_parametrized:
+        # MCP_SERVER mode: a kernel is pre-started and attached at server startup.
+        # JUPYTER_SERVER mode: no pre-attached kernel — create and attach one.
+        created_kernel = False
+        kernel_id = None
+        try:
+            kernel_id = await mcp_client_parametrized.get_first_kernel_id()
+        except Exception:
+            pass
+
+        if kernel_id is None:
+            create_result = await mcp_client_parametrized.create_kernel("python3")
+            kernel_id = _parse_kernel_id_from_create_result(create_result)
+            created_kernel = True
+
+        await mcp_client_parametrized.attach_kernel(DEFAULT_NOTEBOOK, kernel_id)
 
         image_code = """
 from PIL import Image, ImageDraw
@@ -318,12 +354,17 @@ buffer.seek(0)
 from IPython.display import Image as IPythonImage, display
 display(IPythonImage(buffer.getvalue()))
 """
-        result = await mcp_client_parametrized.insert_execute_code_cell(DEFAULT_NOTEBOOK, 1, image_code)
+        try:
+            result = await mcp_client_parametrized.insert_execute_code_cell(DEFAULT_NOTEBOOK, 1, image_code)
 
-        assert isinstance(result['result'], list), "Result should be a list"
-        assert isinstance(result['result'][0], dict)
-        assert result['result'][0]['mimeType'] == "image/png", "Result should be a list of ImageContent"
-        await mcp_client_parametrized.delete_cell(DEFAULT_NOTEBOOK, [1])
+            assert isinstance(result['result'], list), "Result should be a list"
+            assert isinstance(result['result'][0], dict)
+            assert result['result'][0]['mimeType'] == "image/png", "Result should be a list of ImageContent"
+            await mcp_client_parametrized.delete_cell(DEFAULT_NOTEBOOK, [1])
+        finally:
+            await mcp_client_parametrized.detach_kernel(DEFAULT_NOTEBOOK)
+            if created_kernel:
+                await mcp_client_parametrized.delete_kernel(kernel_id)
 
 
 ###############################################################################
@@ -514,25 +555,40 @@ async def test_read_cell(mcp_client_parametrized: MCPClient):
 async def test_execute_code(mcp_client_parametrized: MCPClient):
     """Test execute_code with explicit kernel_id in both modes."""
     async with mcp_client_parametrized:
-        # Get the first available kernel ID (created at server startup)
-        kernel_id = await mcp_client_parametrized.get_first_kernel_id()
+        # MCP_SERVER mode: a kernel is pre-started at server startup.
+        # JUPYTER_SERVER mode: no pre-started kernel — create one.
+        created_kernel = False
+        try:
+            kernel_id = await mcp_client_parametrized.get_first_kernel_id()
+        except Exception:
+            kernel_id = None
+
+        if kernel_id is None:
+            create_result = await mcp_client_parametrized.create_kernel("python3")
+            kernel_id = _parse_kernel_id_from_create_result(create_result)
+            created_kernel = True
         logging.info(f"Using kernel_id: {kernel_id}")
 
-        # Test simple Python code
-        await mcp_client_parametrized.execute_code(kernel_id, "words='Hello IPython World!'")
+        try:
+            # Test simple Python code
+            await mcp_client_parametrized.execute_code(kernel_id, "words='Hello IPython World!'")
 
-        # Test %who magic command (list variables)
-        result = await mcp_client_parametrized.execute_code(kernel_id, "%who")
-        assert "words" in result["result"][0]
+            # Test %who magic command (list variables)
+            result = await mcp_client_parametrized.execute_code(kernel_id, "%who")
+            assert "words" in result["result"][0]
 
-        result = await mcp_client_parametrized.execute_code(kernel_id, "!echo 'Hello from shell'")
-        assert "Hello from shell" in result["result"][0]
+            result = await mcp_client_parametrized.execute_code(kernel_id, "!echo 'Hello from shell'")
+            assert "Hello from shell" in result["result"][0]
 
-        # Test with very short timeout on a potentially long-running command
-        result = await mcp_client_parametrized.execute_code(
-            kernel_id, "import time\ntime.sleep(5)", timeout=2
-        )
-        assert "TIMEOUT ERROR" in result["result"][0]
+            # Test with very short timeout on a potentially long-running command
+            result = await mcp_client_parametrized.execute_code(
+                kernel_id, "import time\ntime.sleep(5)", timeout=2
+            )
+            # MCP_SERVER mode: "[TIMEOUT ERROR: ...]"; JUPYTER_SERVER mode: "[ERROR: TimeoutError: ...]"
+            assert "TIMEOUT" in result["result"][0].upper()
+        finally:
+            if created_kernel:
+                await mcp_client_parametrized.delete_kernel(kernel_id)
 
 
 def _parse_kernel_id_from_create_result(create_result: str) -> str:

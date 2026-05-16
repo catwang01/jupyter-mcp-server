@@ -4,6 +4,7 @@
 
 """List all available kernel specs tool."""
 
+import inspect
 from typing import Any, Optional, List, Dict
 from jupyter_server_client import JupyterServerClient
 
@@ -35,8 +36,12 @@ class ListKernelSpecsTool(BaseTool):
     async def _list_specs_local(self, kernel_spec_manager: Any) -> List[Dict[str, str]]:
         """List kernel specs using local kernel_spec_manager (JUPYTER_SERVER mode)."""
         try:
-            all_specs = await kernel_spec_manager.get_all_specs()
-            if all_specs is None:
+            # get_all_specs is async on GatewayKernelSpecManager but sync on local manager
+            _result = kernel_spec_manager.get_all_specs()
+            if inspect.isawaitable(_result):
+                _result = await _result
+            all_specs = _result or {}
+            if not all_specs:
                 return []
             output = []
             for name, spec_info in all_specs.items():
