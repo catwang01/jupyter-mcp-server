@@ -49,7 +49,6 @@ JUPYTER_TOOLS = [
     # Server Management Tools
     "list_files",
     "list_kernels",
-    "list_kernel_specs",
     "list_notebooks",
     "connect_to_jupyter",
 ]
@@ -378,29 +377,24 @@ class MCPClient:
         return self._extract_text_content(result)
 
     @requires_session
-    async def list_kernel_specs(self):
-        """List all kernel specs that can be started."""
-        result = await self._session.call_tool("list_kernel_specs")  # type: ignore
-        return self._extract_text_content(result)
-
-    @requires_session
     async def list_notebooks(self):
         """List all notebooks with their attached kernel IDs."""
         result = await self._session.call_tool("list_notebooks")  # type: ignore
         return self._extract_text_content(result)
 
     async def get_first_kernel_id(self) -> str:
-        """Parse the first kernel ID from list_kernels TSV output."""
-        tsv = await self.list_kernels()
-        if not tsv:
+        """Parse the first running kernel ID from list_kernels two-level output."""
+        output = await self.list_kernels()
+        if not output:
             raise RuntimeError("list_kernels returned no output")
-        lines = tsv.strip().splitlines()
-        # First line is the header row; data starts at line index 1
-        for line in lines[1:]:
-            cols = line.split("\t")
-            if cols and cols[0].strip():
-                return cols[0].strip()
-        raise RuntimeError(f"No kernel found in list_kernels output:\n{tsv}")
+        for line in output.splitlines():
+            stripped = line.strip()
+            if stripped.startswith("id: "):
+                # line format: "id: <id>  state: ..."
+                parts = stripped.split()
+                if len(parts) >= 2:
+                    return parts[1]
+        raise RuntimeError(f"No kernel found in list_kernels output:\n{output}")
 
     # -------------------------------------------------------------------------
     # Notebook Reading Methods

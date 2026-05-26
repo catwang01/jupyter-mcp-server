@@ -29,7 +29,6 @@ from jupyter_mcp_server.tools.create_kernel_tool import CreateKernelTool
 from jupyter_mcp_server.tools.delete_kernel_tool import DeleteKernelTool
 from jupyter_mcp_server.tools.restart_kernel_tool import RestartKernelTool
 from jupyter_mcp_server.tools.list_kernels_tool import ListKernelsTool
-from jupyter_mcp_server.tools.list_kernel_specs_tool import ListKernelSpecsTool
 from jupyter_mcp_server.tools.list_notebooks_tool import ListNotebooksTool
 
 # Import tool implementations - Kernel-Notebook Association
@@ -63,7 +62,6 @@ __all__ = [
     "DeleteKernelTool",
     "RestartKernelTool",
     "ListKernelsTool",
-    "ListKernelSpecsTool",
     # Notebook Status
     "ListNotebooksTool",
     # Kernel-Notebook Association

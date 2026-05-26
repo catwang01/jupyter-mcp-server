@@ -663,7 +663,10 @@ async def test_list_kernels(mcp_client_parametrized: MCPClient):
     async with mcp_client_parametrized:
         kernel_list = await mcp_client_parametrized.list_kernels()
         logging.debug(f"Kernel list: {kernel_list}")
-        assert "ID\tName\tDisplay_Name\tLanguage\tState\tConnections\tLast_Activity\tEnvironment" in kernel_list
+        assert kernel_list is not None, "list_kernels must not return None"
+        assert "[" in kernel_list, (
+            f"Expected two-level output with spec headers in list_kernels: {kernel_list[:300]}"
+        )
 
 
 ###############################################################################
@@ -784,29 +787,6 @@ async def test_list_notebooks_after_attach(mcp_client_parametrized: MCPClient):
         # Cleanup
         await mcp_client_parametrized.detach_kernel(DEFAULT_NOTEBOOK)
         await mcp_client_parametrized.delete_kernel(kernel_id)
-
-
-###############################################################################
-# list_kernel_specs Tests
-###############################################################################
-
-
-@pytest.mark.asyncio
-@timeout_wrapper(30)
-async def test_list_kernel_specs(mcp_client_parametrized: MCPClient):
-    """list_kernel_specs returns at least one kernel spec with correct TSV header."""
-    async with mcp_client_parametrized:
-        result = await mcp_client_parametrized.list_kernel_specs()
-        logging.debug(f"list_kernel_specs result: {result}")
-        assert result is not None, "list_kernel_specs must not return None"
-        assert "Name\tDisplay_Name\tLanguage" in result, (
-            f"Expected TSV header in list_kernel_specs output: {result[:300]}"
-        )
-        lines = result.strip().splitlines()
-        # At least header + one spec row
-        assert len(lines) >= 2, (
-            f"Expected at least one kernel spec row, got: {result[:300]}"
-        )
 
 
 ###############################################################################

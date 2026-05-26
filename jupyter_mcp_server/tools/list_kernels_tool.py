@@ -9,144 +9,140 @@ from typing import Any, Optional, List, Dict
 from jupyter_server_client import JupyterServerClient
 
 from jupyter_mcp_server.tools._base import BaseTool, ServerMode
-from jupyter_mcp_server.utils import format_TSV
 
 
 class ListKernelsTool(BaseTool):
-    """List all available kernels in the Jupyter server."""
+    """List all available kernels and kernel specs in the Jupyter server."""
 
-    def _list_kernels_http(self, server_client: JupyterServerClient) -> List[Dict[str, str]]:
-        """List kernels using HTTP API (MCP_SERVER mode)."""
+    @staticmethod
+    def _format_last_activity(value: Any) -> str:
+        if not value:
+            return "unknown"
+        if hasattr(value, 'strftime'):
+            return value.strftime("%Y-%m-%d %H:%M:%S")
+        return str(value)
+
+    @staticmethod
+    def _format_env(env_dict: dict) -> str:
+        if not env_dict:
+            return "-"
+        s = "; ".join(f"{k}={v}" for k, v in env_dict.items())
+        return s[:100] + "..." if len(s) > 100 else s
+
+    @staticmethod
+    def _format_output(specs: Dict[str, Dict]) -> str:
+        """Render two-level output: spec header + indented running kernel rows."""
+        lines = []
+        for name, info in specs.items():
+            lines.append(
+                f"[{name}]  {info['display_name']}  ({info['language']})"
+                + (f"  env: {info['env']}" if info['env'] != "-" else "")
+            )
+            if info["running_kernels"]:
+                for k in info["running_kernels"]:
+                    lines.append(
+                        f"    id: {k['id']}  "
+                        f"state: {k['state']}  "
+                        f"connections: {k['connections']}  "
+                        f"last_activity: {k['last_activity']}"
+                    )
+            else:
+                lines.append("    (not running)")
+            lines.append("")
+        return "\n".join(lines).rstrip()
+
+    def _build_specs_http(self, server_client: JupyterServerClient) -> Dict[str, Dict]:
+        """Build spec-keyed dict using HTTP API (MCP_SERVER mode)."""
         try:
-            # Get all kernels from the Jupyter server
-            kernels = server_client.kernels.list_kernels()
-
-            if not kernels:
-                return []
-
-            # Get kernel specifications for additional details
             kernels_specs = server_client.kernelspecs.list_kernelspecs()
+            specs: Dict[str, Dict] = {}
+            if hasattr(kernels_specs, 'kernelspecs'):
+                for name, spec in kernels_specs.kernelspecs.items():
+                    entry: Dict[str, Any] = {
+                        "display_name": "unknown",
+                        "language": "unknown",
+                        "env": "-",
+                        "running_kernels": [],
+                    }
+                    if hasattr(spec, 'spec'):
+                        if hasattr(spec.spec, 'display_name'):
+                            entry["display_name"] = spec.spec.display_name
+                        if hasattr(spec.spec, 'language'):
+                            entry["language"] = spec.spec.language or "unknown"
+                        if hasattr(spec.spec, 'env'):
+                            entry["env"] = self._format_env(spec.spec.env or {})
+                    specs[name] = entry
 
-            # Create enhanced kernel information list
-            output = []
+            kernels = server_client.kernels.list_kernels() or []
             for kernel in kernels:
-                kernel_info = {
-                    "id": kernel.id or "unknown",
-                    "name": kernel.name or "unknown",
-                    "state": "unknown",
-                    "connections": "unknown",
-                    "last_activity": "unknown",
-                    "display_name": "unknown",
-                    "language": "unknown",
-                    "env": "unknown"
-                }
-
-                # Get kernel state - this might vary depending on the API version
+                kernel_name = kernel.name or "unknown"
+                if kernel_name not in specs:
+                    specs[kernel_name] = {
+                        "display_name": "unknown",
+                        "language": "unknown",
+                        "env": "-",
+                        "running_kernels": [],
+                    }
+                state = "unknown"
                 if hasattr(kernel, 'execution_state'):
-                    kernel_info["state"] = kernel.execution_state
+                    state = kernel.execution_state
                 elif hasattr(kernel, 'state'):
-                    kernel_info["state"] = kernel.state
+                    state = kernel.state
+                specs[kernel_name]["running_kernels"].append({
+                    "id": kernel.id or "unknown",
+                    "state": state,
+                    "connections": str(kernel.connections) if hasattr(kernel, 'connections') else "unknown",
+                    "last_activity": self._format_last_activity(
+                        getattr(kernel, 'last_activity', None)
+                    ),
+                })
 
-                # Get connection count
-                if hasattr(kernel, 'connections'):
-                    kernel_info["connections"] = str(kernel.connections)
-
-                # Get last activity
-                if hasattr(kernel, 'last_activity') and kernel.last_activity:
-                    if hasattr(kernel.last_activity, 'strftime'):
-                        kernel_info["last_activity"] = kernel.last_activity.strftime("%Y-%m-%d %H:%M:%S")
-                    else:
-                        kernel_info["last_activity"] = str(kernel.last_activity)
-
-                output.append(kernel_info)
-
-            # Enhance kernel info with specifications
-            for kernel in output:
-                kernel_name = kernel["name"]
-                if hasattr(kernels_specs, 'kernelspecs') and kernel_name in kernels_specs.kernelspecs:
-                    kernel_spec = kernels_specs.kernelspecs[kernel_name]
-                    if hasattr(kernel_spec, 'spec'):
-                        if hasattr(kernel_spec.spec, 'display_name'):
-                            kernel["display_name"] = kernel_spec.spec.display_name
-                        if hasattr(kernel_spec.spec, 'language'):
-                            kernel["language"] = kernel_spec.spec.language
-                        if hasattr(kernel_spec.spec, 'env'):
-                            # Convert env dict to a readable string format
-                            env_dict = kernel_spec.spec.env
-                            if env_dict:
-                                env_str = "; ".join([f"{k}={v}" for k, v in env_dict.items()])
-                                kernel["env"] = env_str[:100] + "..." if len(env_str) > 100 else env_str
-
-            return output
-
+            return specs
         except Exception as e:
             raise RuntimeError(f"Error listing kernels via HTTP: {str(e)}")
 
-    async def _list_kernels_local(
+    async def _build_specs_local(
         self,
         kernel_manager: Any,
-        kernel_spec_manager: Any
-    ) -> List[Dict[str, str]]:
-        """List kernels using local kernel_manager API (JUPYTER_SERVER mode)."""
+        kernel_spec_manager: Any,
+    ) -> Dict[str, Dict]:
+        """Build spec-keyed dict using local managers (JUPYTER_SERVER mode)."""
         try:
-            # list_kernels() is async on GatewayMappingKernelManager but sync on local manager
-            _kernels_result = kernel_manager.list_kernels()
-            if inspect.isawaitable(_kernels_result):
-                _kernels_result = await _kernels_result
-            kernel_infos = list(_kernels_result)
-
-            if not kernel_infos:
-                return []
-
-            # get_all_specs is async on GatewayKernelSpecManager but sync on local manager
             _specs_result = kernel_spec_manager.get_all_specs() if kernel_spec_manager else {}
             if inspect.isawaitable(_specs_result):
                 _specs_result = await _specs_result
-            kernel_specs = _specs_result or {}
-            # Create enhanced kernel information list
-            output = []
-            for kernel_info_dict in kernel_infos:
-                # kernel_info_dict is already a dict with kernel information
-                kernel_id = kernel_info_dict.get('id', 'unknown')
-                kernel_name = kernel_info_dict.get('name', 'unknown')
+            all_specs = _specs_result or {}
 
-                kernel_info = {
-                    "id": kernel_id,
-                    "name": kernel_name,
-                    "state": kernel_info_dict.get('execution_state', 'unknown'),
-                    "connections": str(kernel_info_dict.get('connections', 'unknown')),
-                    "last_activity": "unknown",
-                    "display_name": "unknown",
-                    "language": "unknown",
-                    "env": "unknown"
+            specs: Dict[str, Dict] = {}
+            for name, spec_info in all_specs.items():
+                spec = spec_info.get('spec', {})
+                specs[name] = {
+                    "display_name": spec.get('display_name', 'unknown'),
+                    "language": spec.get('language', 'unknown') or 'unknown',
+                    "env": self._format_env(spec.get('env') or {}),
+                    "running_kernels": [],
                 }
 
-                # Format last activity if present
-                last_activity = kernel_info_dict.get('last_activity')
-                if last_activity:
-                    if hasattr(last_activity, 'strftime'):
-                        kernel_info["last_activity"] = last_activity.strftime("%Y-%m-%d %H:%M:%S")
-                    else:
-                        kernel_info["last_activity"] = str(last_activity)
+            _kernels_result = kernel_manager.list_kernels()
+            if inspect.isawaitable(_kernels_result):
+                _kernels_result = await _kernels_result
+            for k in list(_kernels_result):
+                kernel_name = k.get('name', 'unknown')
+                if kernel_name not in specs:
+                    specs[kernel_name] = {
+                        "display_name": "unknown",
+                        "language": "unknown",
+                        "env": "-",
+                        "running_kernels": [],
+                    }
+                specs[kernel_name]["running_kernels"].append({
+                    "id": k.get('id', 'unknown'),
+                    "state": k.get('execution_state', 'unknown'),
+                    "connections": str(k.get('connections', 'unknown')),
+                    "last_activity": self._format_last_activity(k.get('last_activity')),
+                })
 
-                output.append(kernel_info)
-
-            # Enhance kernel info with specifications
-            for kernel in output:
-                kernel_name = kernel["name"]
-                if kernel_name in kernel_specs:
-                    spec = kernel_specs[kernel_name].get('spec', {})
-                    if 'display_name' in spec:
-                        kernel["display_name"] = spec['display_name']
-                    if 'language' in spec:
-                        kernel["language"] = spec['language']
-                    if 'env' in spec and spec['env']:
-                        env_dict = spec['env']
-                        env_str = "; ".join([f"{k}={v}" for k, v in env_dict.items()])
-                        kernel["env"] = env_str[:100] + "..." if len(env_str) > 100 else env_str
-
-            return output
-
+            return specs
         except Exception as e:
             raise RuntimeError(f"Error listing kernels locally: {str(e)}")
 
@@ -160,39 +156,27 @@ class ListKernelsTool(BaseTool):
         kernel_spec_manager: Optional[Any] = None,
         **kwargs
     ) -> str:
-        """List all available kernels.
+        """List all kernel specs and their running instances.
+
+        Output is two-level:
+          [spec_name]  Display Name  (language)
+              id: <id>  state: <state>  connections: <n>  last_activity: <t>
+              (not running)   ← when no instances are active
 
         Args:
             mode: Server mode (MCP_SERVER or JUPYTER_SERVER)
             server_client: HTTP client for MCP_SERVER mode
             kernel_manager: Direct kernel manager access for JUPYTER_SERVER mode
             kernel_spec_manager: Kernel spec manager for JUPYTER_SERVER mode
-            **kwargs: Additional parameters (unused)
-
-        Returns:
-            Tab-separated table with columns: ID, Name, Display_Name, Language, State, Connections, Last_Activity, Environment
         """
-        # Get kernel info based on mode
         if mode == ServerMode.JUPYTER_SERVER and kernel_manager is not None:
-            kernel_list = await self._list_kernels_local(kernel_manager, kernel_spec_manager)
+            specs = await self._build_specs_local(kernel_manager, kernel_spec_manager)
         elif mode == ServerMode.MCP_SERVER and server_client is not None:
-            kernel_list = self._list_kernels_http(server_client)
+            specs = self._build_specs_http(server_client)
         else:
             raise ValueError(f"Invalid mode or missing required managers/clients: mode={mode}")
 
-        if not kernel_list:
-            headers = ["ID", "Name", "Display_Name", "Language", "State", "Connections", "Last_Activity", "Environment"]
-            return format_TSV(headers, [])
+        if not specs:
+            return "No kernel specs found on the Jupyter server."
 
-        try:
-            # Create TSV formatted output
-            headers = ["ID", "Name", "Display_Name", "Language", "State", "Connections", "Last_Activity", "Environment"]
-            rows = []
-
-            for kernel in kernel_list:
-                rows.append([kernel['id'], kernel['name'], kernel['display_name'], kernel['language'], kernel['state'], kernel['connections'], kernel['last_activity'], kernel['env']])
-
-            return format_TSV(headers, rows)
-
-        except Exception as e:
-            return f"Error formatting kernel list: {str(e)}"
+        return self._format_output(specs)

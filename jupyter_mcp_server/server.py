@@ -50,7 +50,6 @@ from jupyter_mcp_server.tools import (
     DeleteKernelTool,
     RestartKernelTool,
     ListKernelsTool,
-    ListKernelSpecsTool,
     # Notebook Status
     ListNotebooksTool,
     # Kernel-Notebook Association
@@ -261,12 +260,12 @@ async def list_files(
     ),
 )
 @with_hooks("list_kernels")
-async def list_kernels() -> Annotated[str, Field(description="Tab-separated table with columns: ID, Name, Display_Name, Language, State, Connections, Last_Activity, Environment")]:
-    """List all available kernels in the Jupyter server.
-    
-    This tool shows all running and available kernel sessions on the Jupyter server,
-    including their IDs, names, states, connection information, and kernel specifications.
-    Useful for monitoring kernel resources and identifying specific kernels for connection.
+async def list_kernels() -> Annotated[str, Field(description="Two-level output. Level 1: kernel spec header '[name]  Display Name  (language)'. Level 2: indented running instances with id/state/connections/last_activity, or '(not running)' if none.")]:
+    """List all kernel specs and their running instances on the Jupyter server.
+
+    Shows every available kernel spec as a top-level entry, with each running
+    instance listed beneath it. Useful for choosing a kernel_name when calling
+    create_kernel, as well as monitoring active kernels.
     """
     return await safe_notebook_operation(
         lambda: ListKernelsTool().execute(
@@ -279,28 +278,6 @@ async def list_kernels() -> Annotated[str, Field(description="Tab-separated tabl
 
 ###############################################################################
 # Kernel Management Tools.
-
-
-@mcp.tool(
-    annotations=ToolAnnotations(
-        title="List Kernel Specs",
-        readOnlyHint=True,
-    ),
-)
-@with_hooks("list_kernel_specs")
-async def list_kernel_specs() -> Annotated[str, Field(description="Tab-separated table with columns: Name, Display_Name, Language")]:
-    """List all available kernel specs that can be started on the Jupyter server.
-
-    Returns all installable kernel types (e.g. python3, remote SSH kernels, etc.),
-    useful for choosing a kernel_name when calling create_kernel.
-    """
-    return await safe_notebook_operation(
-        lambda: ListKernelSpecsTool().execute(
-            mode=server_context.mode,
-            server_client=server_context.server_client,
-            kernel_spec_manager=server_context.kernel_spec_manager,
-        )
-    )
 
 
 @mcp.tool(
