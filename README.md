@@ -82,8 +82,7 @@ For more details on each tool, their parameters, and return values, please refer
 | Name             | Description                                                                                |
 | :--------------- | :----------------------------------------------------------------------------------------- |
 | `list_files`     | List files and directories in the Jupyter server's file system.                            |
-| `list_kernels`   | List all running kernel sessions on the Jupyter server.                                    |
-| `list_kernel_specs` | List all available kernel specs that can be started on the Jupyter server.               |
+| `list_kernels`   | List all kernel specs and their running instances in a two-level hierarchical format.       |
 | `connect_to_jupyter` | Connect to a Jupyter server dynamically without restarting the MCP server. *Not available when running as Jupyter extension.* |
 
 #### Kernel Management Tools

@@ -52,7 +52,7 @@ Both modes share the same tool implementations, with automatic backend selection
         │                                              │
         │  19 Tools in 4 Categories:                   │
         │  • Server Management (3)                     │
-        │  • Kernel Management (4+2 association)       │
+        │  • Kernel Management (3+2 association)       │
         │  • Notebook Reading (3)                      │
         │  • Cell Operations (7+1 combined)            │
         │                                              │
@@ -198,23 +198,22 @@ All tool methods that call these must:
 2. Use `await` on these calls
 3. Guard against `None` return values (gateway may return missing keys)
 
-This applies to `ListKernelSpecsTool._list_specs_local()` and
-`ListKernelsTool._list_kernels_local()`. Do **not** attempt to run these calls in a
-separate thread — the gateway HTTP client depends on tornado's main event loop.
+This applies to `ListKernelsTool._build_specs_local()`. Do **not** attempt to run
+these calls in a separate thread — the gateway HTTP client depends on tornado's main
+event loop.
 
 ```python
 # Tool Categories and Examples
 
 # Server Management (3 tools)
 class ListFilesTool(BaseTool):        # File system exploration
-class ListKernelsTool(BaseTool):      # List running kernels
+class ListKernelsTool(BaseTool):      # List kernel specs and running instances (two-level)
 class ConnectJupyterTool(BaseTool):   # Dynamic server connection
 
-# Kernel Management (4 tools)
+# Kernel Management (3 tools)
 class CreateKernelTool(BaseTool):     # Create standalone kernel
 class DeleteKernelTool(BaseTool):     # Stop and delete kernel
 class RestartKernelTool(BaseTool):    # Restart kernel
-class ListKernelSpecsTool(BaseTool):  # List available kernel types
 
 # Kernel-Notebook Association (2 tools)
 class AttachKernelTool(BaseTool):     # Link kernel to notebook
@@ -247,8 +246,8 @@ class ExecuteCodeTool(BaseTool):      # Execute code directly in kernel
 - **Backend Integration**: Tools automatically select appropriate backend based on mode
 
 **Tool Categories**:
-1. **Server Management**: File system, kernel introspection, and dynamic connection
-2. **Kernel Management**: Kernel lifecycle (create, delete, restart, list specs)
+1. **Server Management**: File system, kernel/spec introspection, and dynamic connection
+2. **Kernel Management**: Kernel lifecycle (create, delete, restart)
 3. **Kernel-Notebook Association**: Explicit linking of kernels to notebooks
 4. **Notebook Status**: List notebook-kernel attachment state
 5. **Cell Operations**: Fine-grained cell manipulation and execution
@@ -272,12 +271,25 @@ Each tool calls `resolve_cell_index()` after loading cells but before bounds che
 
 `read_notebook` and `read_cell` output includes cell IDs so downstream tools can discover and reference them.
 
-**Output Format (TSV)**:
+**Output Format**:
 
-All listing tools (`list_kernels`, `list_kernel_specs`, `list_notebooks`, `list_files`, `read_notebook`) return tab-separated values (TSV) via `format_TSV(headers, rows)` from `utils.py`. Design rationale:
+Listing tools use format appropriate to their data shape:
+
+- **Flat listings** (`list_notebooks`, `list_files`, `read_notebook`): Return tab-separated values (TSV) via `format_TSV(headers, rows)` from `utils.py`.
+- **Hierarchical listing** (`list_kernels`): Returns a two-level text format — Level 1 shows kernel specs (available kernel types), Level 2 shows running instances under each spec:
+  ```
+  [python3]  Python 3  (python)
+      id: abc-123  state: idle  connections: 2  last_activity: 2024-01-01 12:00:00
+
+  [jd-cloud:python3]  JD Cloud  (python)
+      (not running)
+  ```
+
+Design rationale:
 - MCP tool responses are consumed by LLMs, not parsed by programs
 - TSV is ~40% more token-efficient than equivalent JSON (no braces, quotes, commas)
 - LLMs read tabular TSV as easily as JSON arrays
+- The hierarchical format for `list_kernels` naturally represents the one-to-many relationship between specs and instances
 - The MCP protocol already provides structure (tool name, content type); content layer doesn't need another JSON wrapper
 
 When a listing tool has no results, it returns a human-readable message (e.g., "No kernels found on the Jupyter server.") instead of an empty table.
@@ -568,14 +580,13 @@ jupyter_mcp_server/
 │   │
 │   # Server Management Tools (3)
 │   ├── list_files_tool.py     # File system exploration
-│   ├── list_kernels_tool.py   # List running kernels
+│   ├── list_kernels_tool.py   # List kernel specs and their running instances
 │   ├── connect_jupyter_tool.py # Dynamic server connection
 │   │
-│   # Kernel Management Tools (4)
+│   # Kernel Management Tools (3)
 │   ├── create_kernel_tool.py  # Create standalone kernel
 │   ├── delete_kernel_tool.py  # Stop and delete kernel
 │   ├── restart_kernel_tool.py # Restart kernel
-│   ├── list_kernel_specs_tool.py # List available kernel types
 │   │
 │   # Kernel-Notebook Association Tools (2)
 │   ├── attach_kernel_tool.py  # Link kernel to notebook

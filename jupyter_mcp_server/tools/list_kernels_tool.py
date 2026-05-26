@@ -4,8 +4,9 @@
 
 """List all available kernels tool."""
 
+import asyncio
 import inspect
-from typing import Any, Optional, List, Dict
+from typing import Any, Optional, Dict
 from jupyter_server_client import JupyterServerClient
 
 from jupyter_mcp_server.tools._base import BaseTool, ServerMode
@@ -30,8 +31,12 @@ class ListKernelsTool(BaseTool):
         return s[:100] + "..." if len(s) > 100 else s
 
     @staticmethod
+    def _empty_spec_entry() -> Dict[str, Any]:
+        return {"display_name": "unknown", "language": "unknown", "env": "-", "running_kernels": []}
+
+    @staticmethod
     def _format_output(specs: Dict[str, Dict]) -> str:
-        """Render two-level output: spec header + indented running kernel rows."""
+        """Render specs grouped with their running instances indented below."""
         lines = []
         for name, info in specs.items():
             lines.append(
@@ -51,6 +56,15 @@ class ListKernelsTool(BaseTool):
             lines.append("")
         return "\n".join(lines).rstrip()
 
+    @staticmethod
+    def _resolve_state(kernel_obj: Any) -> str:
+        """Extract execution state from kernel object (HTTP API may use different attr names)."""
+        if hasattr(kernel_obj, 'execution_state'):
+            return kernel_obj.execution_state
+        if hasattr(kernel_obj, 'state'):
+            return kernel_obj.state
+        return "unknown"
+
     def _build_specs_http(self, server_client: JupyterServerClient) -> Dict[str, Dict]:
         """Build spec-keyed dict using HTTP API (MCP_SERVER mode)."""
         try:
@@ -58,12 +72,7 @@ class ListKernelsTool(BaseTool):
             specs: Dict[str, Dict] = {}
             if hasattr(kernels_specs, 'kernelspecs'):
                 for name, spec in kernels_specs.kernelspecs.items():
-                    entry: Dict[str, Any] = {
-                        "display_name": "unknown",
-                        "language": "unknown",
-                        "env": "-",
-                        "running_kernels": [],
-                    }
+                    entry = self._empty_spec_entry()
                     if hasattr(spec, 'spec'):
                         if hasattr(spec.spec, 'display_name'):
                             entry["display_name"] = spec.spec.display_name
@@ -77,20 +86,10 @@ class ListKernelsTool(BaseTool):
             for kernel in kernels:
                 kernel_name = kernel.name or "unknown"
                 if kernel_name not in specs:
-                    specs[kernel_name] = {
-                        "display_name": "unknown",
-                        "language": "unknown",
-                        "env": "-",
-                        "running_kernels": [],
-                    }
-                state = "unknown"
-                if hasattr(kernel, 'execution_state'):
-                    state = kernel.execution_state
-                elif hasattr(kernel, 'state'):
-                    state = kernel.state
+                    specs[kernel_name] = self._empty_spec_entry()
                 specs[kernel_name]["running_kernels"].append({
                     "id": kernel.id or "unknown",
-                    "state": state,
+                    "state": self._resolve_state(kernel),
                     "connections": str(kernel.connections) if hasattr(kernel, 'connections') else "unknown",
                     "last_activity": self._format_last_activity(
                         getattr(kernel, 'last_activity', None)
@@ -108,33 +107,37 @@ class ListKernelsTool(BaseTool):
     ) -> Dict[str, Dict]:
         """Build spec-keyed dict using local managers (JUPYTER_SERVER mode)."""
         try:
-            _specs_result = kernel_spec_manager.get_all_specs() if kernel_spec_manager else {}
-            if inspect.isawaitable(_specs_result):
-                _specs_result = await _specs_result
-            all_specs = _specs_result or {}
+            # Fetch specs and kernels concurrently when both are async
+            specs_coro = kernel_spec_manager.get_all_specs() if kernel_spec_manager else {}
+            kernels_coro = kernel_manager.list_kernels()
+
+            if inspect.isawaitable(specs_coro) and inspect.isawaitable(kernels_coro):
+                all_specs, kernel_infos = await asyncio.gather(specs_coro, kernels_coro)
+            else:
+                if inspect.isawaitable(specs_coro):
+                    all_specs = await specs_coro
+                else:
+                    all_specs = specs_coro
+                if inspect.isawaitable(kernels_coro):
+                    kernel_infos = await kernels_coro
+                else:
+                    kernel_infos = kernels_coro
+
+            all_specs = all_specs or {}
 
             specs: Dict[str, Dict] = {}
             for name, spec_info in all_specs.items():
                 spec = spec_info.get('spec', {})
-                specs[name] = {
-                    "display_name": spec.get('display_name', 'unknown'),
-                    "language": spec.get('language', 'unknown') or 'unknown',
-                    "env": self._format_env(spec.get('env') or {}),
-                    "running_kernels": [],
-                }
+                entry = self._empty_spec_entry()
+                entry["display_name"] = spec.get('display_name', 'unknown')
+                entry["language"] = spec.get('language', 'unknown') or 'unknown'
+                entry["env"] = self._format_env(spec.get('env') or {})
+                specs[name] = entry
 
-            _kernels_result = kernel_manager.list_kernels()
-            if inspect.isawaitable(_kernels_result):
-                _kernels_result = await _kernels_result
-            for k in list(_kernels_result):
+            for k in list(kernel_infos):
                 kernel_name = k.get('name', 'unknown')
                 if kernel_name not in specs:
-                    specs[kernel_name] = {
-                        "display_name": "unknown",
-                        "language": "unknown",
-                        "env": "-",
-                        "running_kernels": [],
-                    }
+                    specs[kernel_name] = self._empty_spec_entry()
                 specs[kernel_name]["running_kernels"].append({
                     "id": k.get('id', 'unknown'),
                     "state": k.get('execution_state', 'unknown'),
