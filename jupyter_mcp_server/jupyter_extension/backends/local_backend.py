@@ -10,10 +10,11 @@ It provides efficient local access to contents_manager and kernel_manager.
 """
 
 from typing import Optional, Any, Union, Literal, TYPE_CHECKING
+from pathlib import Path
 import asyncio
 from mcp.types import ImageContent
 from jupyter_mcp_server.jupyter_extension.backends.base import Backend
-from jupyter_mcp_server.utils import safe_extract_outputs
+from jupyter_mcp_server.utils import safe_extract_outputs, get_notebook_model
 
 if TYPE_CHECKING:
     from jupyter_server.serverapp import ServerApp
@@ -44,8 +45,22 @@ class LocalBackend(Backend):
         self.kernel_manager = serverapp.kernel_manager
         self.kernel_spec_manager = serverapp.kernel_spec_manager
     
+    # Y-Doc integration
+
+    async def _get_ydoc_model(self, path: str):
+        """Try to get NotebookModel via Y-Doc for collaborative editing.
+
+        Returns NotebookModel if the notebook is open in a collaborative session,
+        None otherwise (caller should fall back to contents_manager).
+        """
+        try:
+            abs_path = path if Path(path).is_absolute() else str(Path(self.serverapp.root_dir) / path)
+            return await get_notebook_model(self.serverapp, abs_path)
+        except Exception:
+            return None
+
     # Notebook operations
-    
+
     async def get_notebook_content(self, path: str) -> dict[str, Any]:
         """
         Get notebook content using local contents_manager.
@@ -165,42 +180,52 @@ class LocalBackend(Backend):
         return cells
     
     async def append_cell(
-        self, 
-        path: str, 
+        self,
+        path: str,
         cell_type: Literal["code", "markdown"],
         source: Union[str, list[str]]
     ) -> int:
         """
         Append a cell to notebook.
-        
+
         Args:
             path: Notebook path
             cell_type: Cell type
             source: Cell source
-            
+
         Returns:
             Index of appended cell
         """
+        # Normalize source to string for Y-Doc API
+        source_str = ''.join(source) if isinstance(source, list) else source
+
+        # Try Y-Doc first
+        nb = await self._get_ydoc_model(path)
+        if nb:
+            nb.insert_cell(-1, source_str, cell_type=cell_type)
+            return len(nb) - 1
+
+        # Fallback: direct file write
         content = await self.get_notebook_content(path)
         cells = content.get('cells', [])
-        
+
         # Normalize source to list of strings
         if isinstance(source, str):
             source = source.splitlines(keepends=True)
-        
+
         new_cell = {
             'cell_type': cell_type,
             'metadata': {},
             'source': source
         }
-        
+
         if cell_type == 'code':
             new_cell['outputs'] = []
             new_cell['execution_count'] = None
-        
+
         cells.append(new_cell)
         content['cells'] = cells
-        
+
         # Save updated notebook
         await asyncio.to_thread(
             self.contents_manager.save,
@@ -210,7 +235,7 @@ class LocalBackend(Backend):
             },
             path
         )
-        
+
         return len(cells) - 1
     
     async def insert_cell(
@@ -222,36 +247,46 @@ class LocalBackend(Backend):
     ) -> int:
         """
         Insert a cell at specific index.
-        
+
         Args:
             path: Notebook path
             cell_index: Insert position
             cell_type: Cell type
             source: Cell source
-            
+
         Returns:
             Index of inserted cell
         """
+        # Normalize source to string for Y-Doc API
+        source_str = ''.join(source) if isinstance(source, list) else source
+
+        # Try Y-Doc first
+        nb = await self._get_ydoc_model(path)
+        if nb:
+            nb.insert_cell(cell_index, source_str, cell_type=cell_type)
+            return cell_index
+
+        # Fallback: direct file write
         content = await self.get_notebook_content(path)
         cells = content.get('cells', [])
-        
+
         # Normalize source
         if isinstance(source, str):
             source = source.splitlines(keepends=True)
-        
+
         new_cell = {
             'cell_type': cell_type,
             'metadata': {},
             'source': source
         }
-        
+
         if cell_type == 'code':
             new_cell['outputs'] = []
             new_cell['execution_count'] = None
-        
+
         cells.insert(cell_index, new_cell)
         content['cells'] = cells
-        
+
         # Save updated notebook
         await asyncio.to_thread(
             self.contents_manager.save,
@@ -261,24 +296,32 @@ class LocalBackend(Backend):
             },
             path
         )
-        
+
         return cell_index
     
     async def delete_cell(self, path: str, cell_index: int) -> None:
         """
         Delete a cell from notebook.
-        
+
         Args:
             path: Notebook path
             cell_index: Index to delete
         """
+        # Try Y-Doc first
+        nb = await self._get_ydoc_model(path)
+        if nb:
+            if 0 <= cell_index < len(nb):
+                nb.delete_many_cells([cell_index])
+            return
+
+        # Fallback: direct file write
         content = await self.get_notebook_content(path)
         cells = content.get('cells', [])
-        
+
         if 0 <= cell_index < len(cells):
             cells.pop(cell_index)
             content['cells'] = cells
-            
+
             await asyncio.to_thread(
                 self.contents_manager.save,
                 {
@@ -296,34 +339,44 @@ class LocalBackend(Backend):
     ) -> tuple[str, str]:
         """
         Overwrite cell content.
-        
+
         Args:
             path: Notebook path
             cell_index: Cell index
             new_source: New source
-            
+
         Returns:
             Tuple of (old_source, new_source)
         """
+        new_source_str = ''.join(new_source) if isinstance(new_source, list) else new_source
+
+        # Try Y-Doc first
+        nb = await self._get_ydoc_model(path)
+        if nb:
+            if cell_index < 0 or cell_index >= len(nb):
+                raise ValueError(f"Cell index {cell_index} out of range")
+            cell = nb[cell_index]
+            old_source = cell.get('source', '') if isinstance(cell.get('source'), str) else ''.join(cell.get('source', []))
+            nb.set_cell_source(cell_index, new_source_str)
+            return (old_source, new_source_str)
+
+        # Fallback: direct file write
         content = await self.get_notebook_content(path)
         cells = content.get('cells', [])
-        
+
         if cell_index < 0 or cell_index >= len(cells):
             raise ValueError(f"Cell index {cell_index} out of range")
-        
+
         cell = cells[cell_index]
         old_source = ''.join(cell['source']) if isinstance(cell['source'], list) else cell['source']
-        
+
         # Normalize new source
         if isinstance(new_source, str):
-            new_source_str = new_source
             new_source = new_source.splitlines(keepends=True)
-        else:
-            new_source_str = ''.join(new_source)
-        
+
         cell['source'] = new_source
         content['cells'] = cells
-        
+
         await asyncio.to_thread(
             self.contents_manager.save,
             {
@@ -332,7 +385,7 @@ class LocalBackend(Backend):
             },
             path
         )
-        
+
         return (old_source, new_source_str)
     
     # Kernel operations
@@ -420,14 +473,27 @@ class LocalBackend(Backend):
                 break
         
         # Update cell with outputs
-        content = await self.get_notebook_content(path)
-        if cell_index < len(content['cells']):
-            content['cells'][cell_index]['outputs'] = outputs
-            await asyncio.to_thread(
-                self.contents_manager.save,
-                {'type': 'notebook', 'content': content},
-                path
-            )
+        nb = await self._get_ydoc_model(path)
+        if nb:
+            # Write outputs via Y-Doc
+            if cell_index < len(nb):
+                import pycrdt
+                ycell = nb._doc._ycells[cell_index]
+                cell_outputs = ycell["outputs"]
+                with nb._lock:
+                    with nb._doc._ydoc.transaction(origin=nb._changes_origin):
+                        cell_outputs.clear()
+                        cell_outputs.extend(outputs)
+        else:
+            # Fallback: direct file write
+            content = await self.get_notebook_content(path)
+            if cell_index < len(content['cells']):
+                content['cells'][cell_index]['outputs'] = outputs
+                await asyncio.to_thread(
+                    self.contents_manager.save,
+                    {'type': 'notebook', 'content': content},
+                    path
+                )
         
         return safe_extract_outputs(outputs)
     
