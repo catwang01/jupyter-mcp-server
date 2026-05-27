@@ -337,7 +337,7 @@ class ExecuteCellTool(BaseTool):
                         code=cell_source, kernel_id=kid, metadata={},
                         outputs=result, error=None, context=hook_ctx,
                     )
-                    await self._save_to_disk(notebook_manager, notebook_path)
+                    await self._save_to_disk(notebook_path)
                     return result
 
                 else:
@@ -360,7 +360,7 @@ class ExecuteCellTool(BaseTool):
                             code=cell_source, kernel_id=kid, metadata={},
                             outputs=result, error=None, context=hook_ctx,
                         )
-                        await self._save_to_disk(notebook_manager, notebook_path)
+                        await self._save_to_disk(notebook_path)
                         return result
 
                     except asyncio.TimeoutError as e:
@@ -382,6 +382,7 @@ class ExecuteCellTool(BaseTool):
                                 code=cell_source, kernel_id=kid, metadata={},
                                 outputs=partial_outputs, error=e, context=hook_ctx,
                             )
+                            await self._save_to_disk(notebook_path)
                             return partial_outputs
                         except Exception:
                             pass
@@ -392,6 +393,7 @@ class ExecuteCellTool(BaseTool):
                             code=cell_source, kernel_id=kid, metadata={},
                             outputs=timeout_result, error=e, context=hook_ctx,
                         )
+                        await self._save_to_disk(notebook_path)
                         return timeout_result
 
                     except Exception as e:

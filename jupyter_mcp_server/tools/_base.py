@@ -6,6 +6,7 @@
 
 import json
 import logging
+import urllib.parse
 from abc import ABC, abstractmethod
 from enum import Enum
 from typing import Any, Optional
@@ -66,18 +67,20 @@ class BaseTool(ABC):
         except Exception as e:
             logger.warning(f"Failed to save notebook {path} to disk: {e}")
 
-    async def _save_to_disk(self, notebook_manager: Any, notebook_path: str) -> None:
-        """Convenience wrapper: extract connection info from notebook_manager and save.
+    async def _save_to_disk(self, notebook_path: str) -> None:
+        """Convenience wrapper: read server URL/token from global config and save.
 
-        No-op when server_url is "local" (JUPYTER_SERVER file-based mode already
-        writes directly to disk).
+        No-op when document_url is "local" (JUPYTER_SERVER file-based mode
+        already writes directly to disk).
+
+        There are two call sites in execute_cell (streaming and non-streaming)
+        because both branches complete a Yjs write independently.
         """
-        nb_info = notebook_manager._notebooks.get(notebook_path, {}).get("notebook_info", {})
-        server_url = nb_info.get("server_url", "")
-        token = nb_info.get("token", "")
-        path = nb_info.get("path", notebook_path)
-        if server_url and server_url != "local":
-            await self._save_notebook_to_disk(server_url, token, path)
+        from jupyter_mcp_server.config import get_config
+        config = get_config()
+        if config.document_url and config.document_url != "local":
+            path = urllib.parse.quote(notebook_path.lstrip("/"), safe="/")
+            await self._save_notebook_to_disk(config.document_url, config.document_token or "", path)
 
     @abstractmethod
     async def execute(
