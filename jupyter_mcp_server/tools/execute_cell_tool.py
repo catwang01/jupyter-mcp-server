@@ -5,7 +5,6 @@
 """Unified execute cell tool with configurable streaming."""
 
 import asyncio
-import json
 import logging
 import time
 import nbformat
@@ -31,44 +30,6 @@ logger = logging.getLogger(__name__)
 
 class ExecuteCellTool(BaseTool):
     """Execute a cell with configurable timeout and optional streaming progress updates"""
-
-    async def _save_notebook_to_disk(self, server_url: str, token: str, path: str) -> None:
-        """Trigger a save of the notebook via Jupyter contents API (GET then PUT).
-
-        This forces the server to flush the in-memory Yjs doc state to the .ipynb
-        file on disk, preventing cell duplication / reordering on server restart.
-        """
-        from tornado import httpclient
-
-        # Strip trailing slash from server_url
-        base = server_url.rstrip("/")
-        # URL-encode path segments but keep slashes
-        encoded_path = path.lstrip("/")
-        headers = {"Authorization": f"token {token}", "Content-Type": "application/json"}
-
-        http_client = httpclient.AsyncHTTPClient()
-        try:
-            # GET current content
-            get_resp = await http_client.fetch(
-                f"{base}/api/contents/{encoded_path}",
-                method="GET",
-                headers=headers,
-                raise_error=True,
-            )
-            content = json.loads(get_resp.body)
-
-            # PUT it back — Jupyter server treats this as a save
-            await http_client.fetch(
-                f"{base}/api/contents/{encoded_path}",
-                method="PUT",
-                headers=headers,
-                body=json.dumps(content),
-                raise_error=True,
-            )
-            logger.info(f"Saved notebook {path} to disk via contents API")
-        except Exception as e:
-            # Save failure is non-fatal — log and continue
-            logger.warning(f"Failed to save notebook {path} to disk: {e}")
 
     async def _write_outputs_to_cell(
         self,
@@ -287,12 +248,6 @@ class ExecuteCellTool(BaseTool):
             await wait_for_kernel_idle(kernel, max_wait_seconds=30)
             kid = kernel_id
 
-            # Grab server_url / token / path for post-execution save
-            _nb_info = notebook_manager._notebooks.get(notebook_path, {}).get("notebook_info", {})
-            _save_server_url = _nb_info.get("server_url", "")
-            _save_token = _nb_info.get("token", "")
-            _save_path = _nb_info.get("path", notebook_path)
-
             async with notebook_manager.get_notebook_connection(notebook_path) as notebook:
                 cell_index = resolve_cell_index(notebook.as_dict()["cells"], cell_id=cell_id, cell_index=cell_index)
                 num_cells = len(notebook)
@@ -382,8 +337,7 @@ class ExecuteCellTool(BaseTool):
                         code=cell_source, kernel_id=kid, metadata={},
                         outputs=result, error=None, context=hook_ctx,
                     )
-                    if _save_server_url and _save_server_url != "local":
-                        await self._save_notebook_to_disk(_save_server_url, _save_token, _save_path)
+                    await self._save_to_disk(notebook_manager, notebook_path)
                     return result
 
                 else:
@@ -406,8 +360,7 @@ class ExecuteCellTool(BaseTool):
                             code=cell_source, kernel_id=kid, metadata={},
                             outputs=result, error=None, context=hook_ctx,
                         )
-                        if _save_server_url and _save_server_url != "local":
-                            await self._save_notebook_to_disk(_save_server_url, _save_token, _save_path)
+                        await self._save_to_disk(notebook_manager, notebook_path)
                         return result
 
                     except asyncio.TimeoutError as e:

@@ -292,6 +292,7 @@ class InsertCellTool(BaseTool):
                 notebook_manager, cell_index, cell_type, cell_source, notebook_path=notebook_path,
                 cell_id=cell_id, insert_position=insert_position,
             )
+            await self._save_to_disk(notebook_manager, notebook_path)
         else:
             raise ValueError(f"Invalid mode or missing required clients: mode={mode}")
 

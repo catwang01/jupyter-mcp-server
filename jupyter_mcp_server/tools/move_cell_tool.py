@@ -226,6 +226,7 @@ class MoveCellTool(BaseTool):
                 notebook_manager, source_index, target_index, notebook_path=notebook_path,
                 source_cell_id=source_cell_id, target_cell_id=target_cell_id,
             )
+            await self._save_to_disk(notebook_manager, notebook_path)
         else:
             raise ValueError(f"Invalid mode or missing required clients: mode={mode}")
 

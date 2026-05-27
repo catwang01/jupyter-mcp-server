@@ -208,6 +208,7 @@ class EditCellSourceTool(BaseTool):
                 notebook_path=notebook_path,
                 cell_id=cell_id,
             )
+            await self._save_to_disk(notebook_manager, notebook_path)
         else:
             raise ValueError(f"Invalid mode or missing required clients: mode={mode}")
 
